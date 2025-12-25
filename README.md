@@ -5,8 +5,6 @@
 This project compares several convex hull algorithms executed on both CPU (single-threaded) and GPU (parallel, CUDA-based).  
 The goal is to evaluate their performance on large point sets distributed in the plane.
 
----
-
 ## Problem Description
 
 Given a set \( P \) of points in the two-dimensional Cartesian plane, the task is to find the smallest convex set containing all points from \( P \).
@@ -16,8 +14,6 @@ Formally, the problem reduces to finding a subset \( P' \subseteq P \) such that
 - all points from \( P \) lie inside or on the boundary of this polygon.
 
 This polygon is known as the **convex hull**.
-
----
 
 ## Input Data
 
@@ -30,8 +26,6 @@ Planned dataset sizes include:
 - \(10^7\)
 
 The final dataset sizes may be adjusted based on performance results.
-
----
 
 ## Algorithms
 
@@ -49,16 +43,12 @@ The final dataset sizes may be adjusted based on performance results.
 
 The list of GPU algorithms may be modified if implementation constraints arise.
 
----
-
 ## Evaluation Methodology
 
 Algorithms are compared based on their average execution time.
 
 - Data transfer time between CPU and GPU is excluded.
 - The number of executions is chosen dynamically depending on runtime to ensure stable measurements.
-
----
 
 ## Visualization
 
