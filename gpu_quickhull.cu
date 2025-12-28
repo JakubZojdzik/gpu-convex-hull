@@ -224,6 +224,14 @@ void cudppSegmentedMaxScan(float *d_input, unsigned int *d_flags, float *d_outpu
     for (int i=0; i<((n<10)?n:10); ++i) printf("%u ", h_flags[i]);
     printf("\n"); fflush(stdout);
     
+    // Debug: print all flags
+    unsigned int *h_all_flags = (unsigned int*)malloc(sizeof(unsigned int)*n);
+    cudaMemcpy(h_all_flags, d_flags, sizeof(unsigned int)*n, cudaMemcpyDeviceToHost);
+    printf("[DEBUG]     [cudppSegmentedMaxScan] ALL flags: ");
+    for (int i=0; i<n; ++i) printf("%u ", h_all_flags[i]);
+    printf("\n"); fflush(stdout);
+    free(h_all_flags);
+    
     res = cudppSegmentedScan(plan, d_output, d_input, d_flags, n);
     if (res != CUDPP_SUCCESS) {
         printf("[ERROR] cudppSegmentedScan failed in cudppSegmentedMaxScan!\n"); fflush(stdout);
