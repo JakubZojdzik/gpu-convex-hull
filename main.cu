@@ -19,12 +19,12 @@ extern "C" void gpuQuickHull(
 
 int main()
 {
-    int N = 100000;
+    int N = 50;
 
     float *px = (float*) malloc(sizeof(float) * N);
     float *py = (float*) malloc(sizeof(float) * N);
 
-    srand(123);
+    srand(time(NULL));
 
     int points = 0;
     while (points < N) {

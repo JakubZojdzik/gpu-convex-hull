@@ -480,19 +480,34 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     
     int currentN = n;
     bool changed = true;
-    
+    int iteration = 0;
+
+    printf("[DEBUG] Starting QuickHull main loop with n=%d, numPartitions=%d\n", currentN, numPartitions);
+    fflush(stdout);
+
     // Main loop (steps 7-53)
     while (changed && currentN > 0) {
         changed = false;
         int numBlocks = (currentN + BLOCK_SIZE - 1) / BLOCK_SIZE;
         
+        printf("[DEBUG] Iteration %d: currentN=%d, numPartitions=%d, numBlocks=%d\n", 
+               iteration, currentN, numPartitions, numBlocks);
+        fflush(stdout);
+
         // Steps 8-16: Compute distances
+        printf("[DEBUG]   Computing distances...\n"); fflush(stdout);
         int sharedMemSize = 2 * (BLOCK_SIZE + 2) * sizeof(float);
         computeDistancesKernel<<<numBlocks, BLOCK_SIZE, sharedMemSize>>>(
             d_px, d_py, d_labels, d_ansX, d_ansY, ansSize, d_distances, currentN);
-        cudaDeviceSynchronize();
+        cudaError_t err = cudaDeviceSynchronize();
+        if (err != cudaSuccess) {
+            printf("[ERROR] computeDistancesKernel failed: %s\n", cudaGetErrorString(err));
+            fflush(stdout);
+        }
+        printf("[DEBUG]   Distances computed.\n"); fflush(stdout);
         
         // Steps 17-20: Initialize arrays
+        printf("[DEBUG]   Initializing state/maxIdx arrays...\n"); fflush(stdout);
         cudaMemset(d_state, 0, numPartitions * sizeof(int));
         
         // Initialize maxIdx to INT_MAX (so atomicMin can find the minimum index)
@@ -501,38 +516,62 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         
         // Steps 22-30: Find max distance point per partition using segmented scan
         // Create segment flags (1 at start of each partition)
+        printf("[DEBUG]   Creating segment flags...\n"); fflush(stdout);
         createSegmentFlagsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_labels, d_segmentFlags, currentN);
-        cudaDeviceSynchronize();
+        err = cudaDeviceSynchronize();
+        if (err != cudaSuccess) {
+            printf("[ERROR] createSegmentFlagsKernel failed: %s\n", cudaGetErrorString(err));
+            fflush(stdout);
+        }
         
         // Perform segmented max scan (negative distances won't win against positive ones)
+        printf("[DEBUG]   Performing segmented max scan...\n"); fflush(stdout);
         cudppSegmentedMaxScan(d_distances, d_segmentFlags, d_scanResult, currentN);
+        printf("[DEBUG]   Segmented max scan done.\n"); fflush(stdout);
         
         // Find max points from scan result (stores index atomically)
+        printf("[DEBUG]   Finding max points from scan...\n"); fflush(stdout);
         findMaxPointFromScanKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_px, d_py, d_labels, d_distances, d_scanResult, d_segmentFlags,
             d_maxIdx, d_state, currentN);
-        cudaDeviceSynchronize();
+        err = cudaDeviceSynchronize();
+        if (err != cudaSuccess) {
+            printf("[ERROR] findMaxPointFromScanKernel failed: %s\n", cudaGetErrorString(err));
+            fflush(stdout);
+        }
         
         cudaMemcpy(h_state, d_state, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_maxIdx, d_maxIdx, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
         
+        printf("[DEBUG]   State/maxIdx for partitions:\n"); fflush(stdout);
+        for (int i = 0; i < numPartitions; i++) {
+            printf("[DEBUG]     partition %d: state=%d, maxIdx=%d\n", i, h_state[i], h_maxIdx[i]);
+        }
+        fflush(stdout);
+
         for (int i = 0; i < numPartitions; i++) {
             if (h_state[i] == 1) {
                 changed = true;
                 break;
             }
         }
+        printf("[DEBUG]   changed=%d\n", changed ? 1 : 0); fflush(stdout);
         if (!changed) break;
         
         // Steps 32-35: Compute prefix sum of state array
+        printf("[DEBUG]   Computing state prefix sum...\n"); fflush(stdout);
         cudppExclusiveScan(d_state, d_statePrefix, numPartitions);
         cudaMemcpy(h_statePrefix, d_statePrefix, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
+        printf("[DEBUG]   State prefix: ");
+        for (int i = 0; i < numPartitions; i++) printf("%d ", h_statePrefix[i]);
+        printf("\n"); fflush(stdout);
         
         // Steps 50-52 (executed before 36-47): Update ANS array
         // Note: We update ANS first because classifyPointsKernel reads the new
         // partition endpoints (including MAX points) from ANS. This is equivalent
         // to the pseudocode which uses a separate MAX[] array during classification.
+        printf("[DEBUG]   Updating ANS array...\n"); fflush(stdout);
         float *h_ansXNew = new float[maxAnsSize];
         float *h_ansYNew = new float[maxAnsSize];
         int newAnsSize = 0;
@@ -574,42 +613,71 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         
         delete[] h_ansXNew;
         delete[] h_ansYNew;
-        
+
+        printf("[DEBUG]   ANS updated: ansSize=%d, newNumPartitions=%d\n", ansSize, newNumPartitions);
+        fflush(stdout);
+
         // Steps 36-47: Compact and relabel using prefix scans (as per paper)
         // Now that ANS contains the new MAX points, we can classify points.
         // a) Classify points into left/right sub-partitions
+        printf("[DEBUG]   Classifying points...\n"); fflush(stdout);
         classifyPointsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_px, d_py, d_labels, d_distances, d_statePrefix,
             d_ansX, d_ansY, d_goesLeft, d_goesRight, currentN);
-        cudaDeviceSynchronize();
+        err = cudaDeviceSynchronize();
+        if (err != cudaSuccess) {
+            printf("[ERROR] classifyPointsKernel failed: %s\n", cudaGetErrorString(err));
+            fflush(stdout);
+        }
         
         // Create segment flags for segmented scans
+        printf("[DEBUG]   Creating partition flags...\n"); fflush(stdout);
         createPartitionFlagsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_labels, d_segmentFlags, currentN);
-        cudaDeviceSynchronize();
+        err = cudaDeviceSynchronize();
+        if (err != cudaSuccess) {
+            printf("[ERROR] createPartitionFlagsKernel failed: %s\n", cudaGetErrorString(err));
+            fflush(stdout);
+        }
         
         // b) Use prefix scan to determine indices for left sub-partition
+        printf("[DEBUG]   Segmented exclusive scan for left...\n"); fflush(stdout);
         cudppSegmentedExclusiveScan(d_goesLeft, d_segmentFlags, d_leftScan, currentN);
         
         // c) Use prefix scan to determine indices for right sub-partition  
+        printf("[DEBUG]   Segmented exclusive scan for right...\n"); fflush(stdout);
         cudppSegmentedExclusiveScan(d_goesRight, d_segmentFlags, d_rightScan, currentN);
         
         // Get total counts per partition using inclusive scan
+        printf("[DEBUG]   Segmented inclusive scans...\n"); fflush(stdout);
         cudppSegmentedInclusiveScan(d_goesLeft, d_segmentFlags, d_leftScanInc, currentN);
         cudppSegmentedInclusiveScan(d_goesRight, d_segmentFlags, d_rightScanInc, currentN);
+        printf("[DEBUG]   Scans done.\n"); fflush(stdout);
         
         // Extract counts from the last element of each segment
+        printf("[DEBUG]   Extracting partition counts...\n"); fflush(stdout);
         cudaMemset(d_leftCount, 0, numPartitions * sizeof(int));
         cudaMemset(d_rightCount, 0, numPartitions * sizeof(int));
         extractPartitionCountsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_labels, d_segmentFlags, d_leftScanInc, d_rightScanInc,
             d_leftCount, d_rightCount, currentN);
-        cudaDeviceSynchronize();
+        err = cudaDeviceSynchronize();
+        if (err != cudaSuccess) {
+            printf("[ERROR] extractPartitionCountsKernel failed: %s\n", cudaGetErrorString(err));
+            fflush(stdout);
+        }
         
         cudaMemcpy(h_leftCount, d_leftCount, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_rightCount, d_rightCount, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
         
+        printf("[DEBUG]   Left/Right counts per partition:\n");
+        for (int i = 0; i < numPartitions; i++) {
+            printf("[DEBUG]     partition %d: left=%d, right=%d\n", i, h_leftCount[i], h_rightCount[i]);
+        }
+        fflush(stdout);
+
         // Compute partition start positions
+        printf("[DEBUG]   Computing partition start positions...\n"); fflush(stdout);
         h_partitionStart[0] = 0;
         int newPartIdx = 0;
         for (int i = 0; i < numPartitions; i++) {
@@ -628,14 +696,24 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         
         int newN = h_partitionStart[newNumPartitions];
         
+        printf("[DEBUG]   newN=%d, partition starts: ", newN);
+        for (int i = 0; i <= newNumPartitions; i++) printf("%d ", h_partitionStart[i]);
+        printf("\n"); fflush(stdout);
+
         if (newN > 0) {
+            printf("[DEBUG]   Compacting points...\n"); fflush(stdout);
             cudaMemcpy(d_partitionStart, h_partitionStart, (newNumPartitions + 1) * sizeof(int), cudaMemcpyHostToDevice);
             
             compactWithScanKernel<<<numBlocks, BLOCK_SIZE>>>(
                 d_px, d_py, d_labels, d_goesLeft, d_goesRight,
                 d_leftScan, d_rightScan, d_leftCount, d_statePrefix,
                 d_state, d_partitionStart, d_pxNew, d_pyNew, d_labelsNew, currentN);
-            cudaDeviceSynchronize();
+            err = cudaDeviceSynchronize();
+            if (err != cudaSuccess) {
+                printf("[ERROR] compactWithScanKernel failed: %s\n", cudaGetErrorString(err));
+                fflush(stdout);
+            }
+            printf("[DEBUG]   Compact done, swapping buffers.\n"); fflush(stdout);
             
             float *tmp; int *tmpi;
             tmp = d_px; d_px = d_pxNew; d_pxNew = tmp;
@@ -645,7 +723,21 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         
         currentN = newN;
         numPartitions = newNumPartitions;
+        iteration++;
+        printf("[DEBUG] End of iteration %d: currentN=%d, numPartitions=%d\n\n", 
+               iteration-1, currentN, numPartitions);
+        fflush(stdout);
+        
+        // Safety check to prevent infinite loops
+        if (iteration > 100) {
+            printf("[ERROR] Too many iterations, breaking to prevent infinite loop!\n");
+            fflush(stdout);
+            break;
+        }
     }
+    
+    printf("[DEBUG] Main loop ended. Final ansSize=%d\n", ansSize);
+    fflush(stdout);
     
     // Extract hull points
     int hullSize = 0;

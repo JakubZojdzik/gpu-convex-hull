@@ -2,7 +2,7 @@ CUDA_HOME ?= /usr/local/cuda
 CUDPP_PATH ?= ./cudpp
 
 INC := -I$(CUDA_HOME)/include -I$(CUDPP_PATH)/include -I. -Iheaders
-LIB := -L$(CUDA_HOME)/lib64 -L$(CUDPP_PATH)/build/lib -lcudart -lcudpp
+LIB := -L$(CUDA_HOME)/lib64 -L$(CUDPP_PATH)/build/lib -lcudart -lcudpp -ldl
 
 CXXFLAGS  := -O2 -std=c++17 -fPIC
 NVCCFLAGS := -O2 -lineinfo -arch=sm_86 --ptxas-options=-v --use_fast_math
