@@ -1,10 +1,10 @@
-# CUDA paths - adjust CUDA_HOME if needed
 CUDA_HOME ?= /usr/local/cuda
-INC := -I$(CUDA_HOME)/include -I. -Iheaders
-LIB := -L$(CUDA_HOME)/lib64 -lcudart -lcudpp
+CUDPP_PATH ?= ./cudpp
+
+INC := -I$(CUDA_HOME)/include -I$(CUDPP_PATH)/include -I. -Iheaders
+LIB := -L$(CUDA_HOME)/lib64 -L$(CUDPP_PATH)/build/lib -lcudart -lcudpp
 
 CXXFLAGS  := -O2 -std=c++17 -fPIC
-# Adjust -arch for your GPU (sm_86 = RTX 30xx, sm_75 = RTX 20xx, sm_61 = GTX 10xx)
 NVCCFLAGS := -O2 -lineinfo -arch=sm_86 --ptxas-options=-v --use_fast_math
 
 CPU_SRCS := \
