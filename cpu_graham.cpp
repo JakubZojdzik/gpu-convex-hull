@@ -1,18 +1,15 @@
 #include <bits/stdc++.h>
+#include "utils.h"
 using namespace std;
 
-struct Point {
-    float x, y;
-};
-
-// -1 - left, +1 - right, 0 - in line
-int orientation(const Point &p, const Point &q, const Point &r) {
-    float val = (q.y - p.y)*(r.x - q.x) - (q.x - p.x)*(r.y - q.y);
+// >0 - R is on the left of PQ, =0 - R is in line with PQ, <0 R is on the right of PQ
+static float orientation(const Point &p, const Point &q, const Point &r) {
+    float val = (q.x - p.x)*(r.y - p.y) - (q.y - p.y)*(r.x - p.x);
     if (val == 0) return 0;
     return (val > 0) ? 1 : -1;
 }
 
-float dist(const Point &p, const Point &q) {
+static float dist(const Point &p, const Point &q) {
     return (p.x - q.x)*(p.x - q.x) + (p.y - q.y)*(p.y - q.y);
 }
 
