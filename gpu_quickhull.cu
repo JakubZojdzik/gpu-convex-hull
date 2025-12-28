@@ -212,6 +212,18 @@ void cudppSegmentedMaxScan(float *d_input, unsigned int *d_flags, float *d_outpu
         printf("[ERROR] cudppPlan failed in cudppSegmentedMaxScan!\n"); fflush(stdout);
     }
     printf("[DEBUG]     [cudppSegmentedMaxScan] plan created\n"); fflush(stdout);
+    
+    // Debug: print first 10 flags and input values
+    float h_input[10];
+    unsigned int h_flags[10];
+    cudaMemcpy(h_input, d_input, sizeof(float)*((n<10)?n:10), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_flags, d_flags, sizeof(unsigned int)*((n<10)?n:10), cudaMemcpyDeviceToHost);
+    printf("[DEBUG]     [cudppSegmentedMaxScan] input[0..9]: ");
+    for (int i=0; i<((n<10)?n:10); ++i) printf("%.3f ", h_input[i]);
+    printf("\n[DEBUG]     [cudppSegmentedMaxScan] flags[0..9]: ");
+    for (int i=0; i<((n<10)?n:10); ++i) printf("%u ", h_flags[i]);
+    printf("\n"); fflush(stdout);
+    
     res = cudppSegmentedScan(plan, d_output, d_input, d_flags, n);
     if (res != CUDPP_SUCCESS) {
         printf("[ERROR] cudppSegmentedScan failed in cudppSegmentedMaxScan!\n"); fflush(stdout);
