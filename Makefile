@@ -1,5 +1,5 @@
 CUDA_HOME ?= /usr/local/cuda
-CUDPP_PATH ?= ./cudpp
+CUDPP_PATH ?= ../cudpp
 
 INC := -I$(CUDA_HOME)/include -I$(CUDPP_PATH)/include -I. -Iheaders
 LIB := -L$(CUDA_HOME)/lib64 -L$(CUDPP_PATH)/build/lib -lcudart -lcudpp -ldl
