@@ -199,18 +199,26 @@ __global__ void findMaxPointFromScanKernel(float *px, float *py, int *labels,
 
 // CUDPP segmented scan for finding max per partition
 void cudppSegmentedMaxScan(float *d_input, unsigned int *d_flags, float *d_output, int n) {
+    printf("[DEBUG]     [cudppSegmentedMaxScan] called with n=%d\n", n); fflush(stdout);
     initCUDPP();
-    
     CUDPPConfiguration config;
     config.algorithm = CUDPP_SEGMENTED_SCAN;
     config.op = CUDPP_MAX;
     config.datatype = CUDPP_FLOAT;
     config.options = CUDPP_OPTION_INCLUSIVE | CUDPP_OPTION_FORWARD;
-    
     CUDPPHandle plan;
-    cudppPlan(cudppHandle, &plan, config, n, 1, 0);
-    cudppSegmentedScan(plan, d_output, d_input, d_flags, n);
+    CUDPPResult res = cudppPlan(cudppHandle, &plan, config, n, 1, 0);
+    if (res != CUDPP_SUCCESS) {
+        printf("[ERROR] cudppPlan failed in cudppSegmentedMaxScan!\n"); fflush(stdout);
+    }
+    printf("[DEBUG]     [cudppSegmentedMaxScan] plan created\n"); fflush(stdout);
+    res = cudppSegmentedScan(plan, d_output, d_input, d_flags, n);
+    if (res != CUDPP_SUCCESS) {
+        printf("[ERROR] cudppSegmentedScan failed in cudppSegmentedMaxScan!\n"); fflush(stdout);
+    }
+    printf("[DEBUG]     [cudppSegmentedMaxScan] scan done\n"); fflush(stdout);
     cudppDestroyPlan(plan);
+    printf("[DEBUG]     [cudppSegmentedMaxScan] plan destroyed\n"); fflush(stdout);
 }
 
 // ============================================================================
