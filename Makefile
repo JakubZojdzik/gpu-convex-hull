@@ -1,6 +1,6 @@
 
 CUDA_HOME ?= /usr/local/cuda
-INC := -I$(CUDA_HOME)/include -I. -Iheaders
+INC := -I$(CUDA_HOME)/include -I. -Iheaders -I../cccl/thrust -I../cccl/libcudacxx/include -I../cccl/cub
 LIB := -L$(CUDA_HOME)/lib64 -lcudart -ldl
 
 CXXFLAGS  := -O2 -std=c++17 -fPIC
