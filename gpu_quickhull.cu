@@ -3,58 +3,42 @@
 #include <float.h>
 #include <climits>
 #include <vector>
-#include <cudpp.h>
+#include <cub/cub.cuh>
 #include "utils.h"
 
 // Block size for CUDA kernels (as per paper: chunks of 512)
 #define BLOCK_SIZE 512
 
-// Global CUDPP handle
-static CUDPPHandle cudppHandle = 0;
-static bool cudppInitialized = false;
 
-void initCUDPP() {
-    if (!cudppInitialized) {
-        cudppCreate(&cudppHandle);
-        cudppInitialized = true;
-    }
-}
 
 // ============================================================================
 // Steps 5-6: Find min and max X using CUDPP reduce
 // Paper: "We have implemented steps 5 and 6 by using two prefix scans 
 // (taking max operator once and min operator once)"
 // ============================================================================
-void findMinMaxWithCUDPP(float *d_px, int n, float *minX, float *maxX) {
-    initCUDPP();
-    
-    float *d_minX, *d_maxX;
+void findMinMaxWithCUB(float *d_px, int n, float *minX, float *maxX) {
+    // CUB DeviceReduce for min
+    float *d_minX;
     cudaMalloc(&d_minX, sizeof(float));
-    cudaMalloc(&d_maxX, sizeof(float));
-    
-    CUDPPConfiguration config;
-    config.algorithm = CUDPP_REDUCE;
-    config.datatype = CUDPP_FLOAT;
-    config.options = 0;
-    
-    // MIN reduce
-    config.op = CUDPP_MIN;
-    CUDPPHandle planMin;
-    cudppPlan(cudppHandle, &planMin, config, n, 1, 0);
-    cudppReduce(planMin, d_minX, d_px, n);
-    cudppDestroyPlan(planMin);
-    
-    // MAX reduce
-    config.op = CUDPP_MAX;
-    CUDPPHandle planMax;
-    cudppPlan(cudppHandle, &planMax, config, n, 1, 0);
-    cudppReduce(planMax, d_maxX, d_px, n);
-    cudppDestroyPlan(planMax);
-    
+    void *d_temp_storage = nullptr;
+    size_t temp_storage_bytes = 0;
+    cub::DeviceReduce::Min(d_temp_storage, temp_storage_bytes, d_px, d_minX, n);
+    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    cub::DeviceReduce::Min(d_temp_storage, temp_storage_bytes, d_px, d_minX, n);
     cudaMemcpy(minX, d_minX, sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(maxX, d_maxX, sizeof(float), cudaMemcpyDeviceToHost);
-    
+    cudaFree(d_temp_storage);
     cudaFree(d_minX);
+
+    // CUB DeviceReduce for max
+    float *d_maxX;
+    cudaMalloc(&d_maxX, sizeof(float));
+    d_temp_storage = nullptr;
+    temp_storage_bytes = 0;
+    cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_px, d_maxX, n);
+    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_px, d_maxX, n);
+    cudaMemcpy(maxX, d_maxX, sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(d_temp_storage);
     cudaFree(d_maxX);
 }
 
@@ -62,19 +46,13 @@ void findMinMaxWithCUDPP(float *d_px, int n, float *minX, float *maxX) {
 // CUDPP-based exclusive scan for prefix sums (used in steps 32-35, 36-47)
 // Paper: "We implemented steps 32-35 and 50-52 by using one prefix scan"
 // ============================================================================
-void cudppExclusiveScan(int *d_input, int *d_output, int n) {
-    initCUDPP();
-    
-    CUDPPConfiguration config;
-    config.algorithm = CUDPP_SCAN;
-    config.op = CUDPP_ADD;
-    config.datatype = CUDPP_INT;
-    config.options = CUDPP_OPTION_EXCLUSIVE | CUDPP_OPTION_FORWARD;
-    
-    CUDPPHandle plan;
-    cudppPlan(cudppHandle, &plan, config, n, 1, 0);
-    cudppScan(plan, d_output, d_input, n);
-    cudppDestroyPlan(plan);
+void cubExclusiveScan(int *d_input, int *d_output, int n) {
+    void *d_temp_storage = nullptr;
+    size_t temp_storage_bytes = 0;
+    cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_input, d_output, n);
+    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_input, d_output, n);
+    cudaFree(d_temp_storage);
 }
 
 // ============================================================================
@@ -198,47 +176,33 @@ __global__ void findMaxPointFromScanKernel(float *px, float *py, int *labels,
 }
 
 // CUDPP segmented scan for finding max per partition
-void cudppSegmentedMaxScan(float *d_input, unsigned int *d_flags, float *d_output, int n) {
-    printf("[DEBUG]     [cudppSegmentedMaxScan] called with n=%d\n", n); fflush(stdout);
-    initCUDPP();
-    CUDPPConfiguration config;
-    config.algorithm = CUDPP_SEGMENTED_SCAN;
-    config.op = CUDPP_MAX;
-    config.datatype = CUDPP_FLOAT;
-    config.options = CUDPP_OPTION_INCLUSIVE | CUDPP_OPTION_FORWARD;
-    CUDPPHandle plan;
-    CUDPPResult res = cudppPlan(cudppHandle, &plan, config, n, 1, 0);
-    if (res != CUDPP_SUCCESS) {
-        printf("[ERROR] cudppPlan failed in cudppSegmentedMaxScan!\n"); fflush(stdout);
+void cubSegmentedMaxReduce(float *d_input, unsigned int *d_flags, float *d_output, int n) {
+    // d_flags: 1 at segment start, 0 elsewhere
+    // Convert flags to segment offsets
+    int num_segments = 0;
+    std::vector<int> h_offsets;
+    h_offsets.reserve(n+1);
+    cudaDeviceSynchronize();
+    unsigned int* h_flags = new unsigned int[n];
+    cudaMemcpy(h_flags, d_flags, n * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+    for (int i = 0; i < n; ++i) {
+        if (h_flags[i] == 1) {
+            h_offsets.push_back(i);
+            num_segments++;
+        }
     }
-    printf("[DEBUG]     [cudppSegmentedMaxScan] plan created\n"); fflush(stdout);
-    
-    // Debug: print first 10 flags and input values
-    float h_input[10];
-    unsigned int h_flags[10];
-    cudaMemcpy(h_input, d_input, sizeof(float)*((n<10)?n:10), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_flags, d_flags, sizeof(unsigned int)*((n<10)?n:10), cudaMemcpyDeviceToHost);
-    printf("[DEBUG]     [cudppSegmentedMaxScan] input[0..9]: ");
-    for (int i=0; i<((n<10)?n:10); ++i) printf("%.3f ", h_input[i]);
-    printf("\n[DEBUG]     [cudppSegmentedMaxScan] flags[0..9]: ");
-    for (int i=0; i<((n<10)?n:10); ++i) printf("%u ", h_flags[i]);
-    printf("\n"); fflush(stdout);
-    
-    // Debug: print all flags
-    unsigned int *h_all_flags = (unsigned int*)malloc(sizeof(unsigned int)*n);
-    cudaMemcpy(h_all_flags, d_flags, sizeof(unsigned int)*n, cudaMemcpyDeviceToHost);
-    printf("[DEBUG]     [cudppSegmentedMaxScan] ALL flags: ");
-    for (int i=0; i<n; ++i) printf("%u ", h_all_flags[i]);
-    printf("\n"); fflush(stdout);
-    free(h_all_flags);
-    
-    res = cudppSegmentedScan(plan, d_output, d_input, d_flags, n);
-    if (res != CUDPP_SUCCESS) {
-        printf("[ERROR] cudppSegmentedScan failed in cudppSegmentedMaxScan!\n"); fflush(stdout);
-    }
-    printf("[DEBUG]     [cudppSegmentedMaxScan] scan done\n"); fflush(stdout);
-    cudppDestroyPlan(plan);
-    printf("[DEBUG]     [cudppSegmentedMaxScan] plan destroyed\n"); fflush(stdout);
+    h_offsets.push_back(n);
+    int* d_offsets;
+    cudaMalloc(&d_offsets, (num_segments+1) * sizeof(int));
+    cudaMemcpy(d_offsets, h_offsets.data(), (num_segments+1) * sizeof(int), cudaMemcpyHostToDevice);
+    void *d_temp_storage = nullptr;
+    size_t temp_storage_bytes = 0;
+    cub::DeviceSegmentedReduce::Max(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
+    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    cub::DeviceSegmentedReduce::Max(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
+    cudaFree(d_temp_storage);
+    cudaFree(d_offsets);
+    delete[] h_flags;
 }
 
 // ============================================================================
@@ -349,35 +313,59 @@ __global__ void extractPartitionCountsKernel(int *labels, unsigned int *flags,
 }
 
 // CUDPP segmented exclusive scan for computing indices
-void cudppSegmentedExclusiveScan(int *d_input, unsigned int *d_flags, int *d_output, int n) {
-    initCUDPP();
-    
-    CUDPPConfiguration config;
-    config.algorithm = CUDPP_SEGMENTED_SCAN;
-    config.op = CUDPP_ADD;
-    config.datatype = CUDPP_INT;
-    config.options = CUDPP_OPTION_EXCLUSIVE | CUDPP_OPTION_FORWARD;
-    
-    CUDPPHandle plan;
-    cudppPlan(cudppHandle, &plan, config, n, 1, 0);
-    cudppSegmentedScan(plan, d_output, d_input, d_flags, n);
-    cudppDestroyPlan(plan);
+void cubSegmentedExclusiveScan(int *d_input, unsigned int *d_flags, int *d_output, int n) {
+    // Convert flags to segment offsets
+    int num_segments = 0;
+    std::vector<int> h_offsets;
+    h_offsets.reserve(n+1);
+    unsigned int* h_flags = new unsigned int[n];
+    cudaMemcpy(h_flags, d_flags, n * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+    for (int i = 0; i < n; ++i) {
+        if (h_flags[i] == 1) {
+            h_offsets.push_back(i);
+            num_segments++;
+        }
+    }
+    h_offsets.push_back(n);
+    int* d_offsets;
+    cudaMalloc(&d_offsets, (num_segments+1) * sizeof(int));
+    cudaMemcpy(d_offsets, h_offsets.data(), (num_segments+1) * sizeof(int), cudaMemcpyHostToDevice);
+    void *d_temp_storage = nullptr;
+    size_t temp_storage_bytes = 0;
+    cub::DeviceSegmentedScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
+    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    cub::DeviceSegmentedScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
+    cudaFree(d_temp_storage);
+    cudaFree(d_offsets);
+    delete[] h_flags;
 }
 
 // CUDPP segmented inclusive scan for getting total counts per partition
-void cudppSegmentedInclusiveScan(int *d_input, unsigned int *d_flags, int *d_output, int n) {
-    initCUDPP();
-    
-    CUDPPConfiguration config;
-    config.algorithm = CUDPP_SEGMENTED_SCAN;
-    config.op = CUDPP_ADD;
-    config.datatype = CUDPP_INT;
-    config.options = CUDPP_OPTION_INCLUSIVE | CUDPP_OPTION_FORWARD;
-    
-    CUDPPHandle plan;
-    cudppPlan(cudppHandle, &plan, config, n, 1, 0);
-    cudppSegmentedScan(plan, d_output, d_input, d_flags, n);
-    cudppDestroyPlan(plan);
+void cubSegmentedInclusiveScan(int *d_input, unsigned int *d_flags, int *d_output, int n) {
+    // Convert flags to segment offsets
+    int num_segments = 0;
+    std::vector<int> h_offsets;
+    h_offsets.reserve(n+1);
+    unsigned int* h_flags = new unsigned int[n];
+    cudaMemcpy(h_flags, d_flags, n * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+    for (int i = 0; i < n; ++i) {
+        if (h_flags[i] == 1) {
+            h_offsets.push_back(i);
+            num_segments++;
+        }
+    }
+    h_offsets.push_back(n);
+    int* d_offsets;
+    cudaMalloc(&d_offsets, (num_segments+1) * sizeof(int));
+    cudaMemcpy(d_offsets, h_offsets.data(), (num_segments+1) * sizeof(int), cudaMemcpyHostToDevice);
+    void *d_temp_storage = nullptr;
+    size_t temp_storage_bytes = 0;
+    cub::DeviceSegmentedScan::InclusiveSum(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
+    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    cub::DeviceSegmentedScan::InclusiveSum(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
+    cudaFree(d_temp_storage);
+    cudaFree(d_offsets);
+    delete[] h_flags;
 }
 
 // ============================================================================
@@ -394,7 +382,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         return;
     }
     
-    initCUDPP();
+    // No CUDPP init needed for CUB
 
     // Device memory
     float *d_px, *d_py, *d_pxNew, *d_pyNew;
@@ -414,7 +402,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     
     // Steps 5-6: Find min and max points
     float minX, maxX;
-    findMinMaxWithCUDPP(d_px, n, &minX, &maxX);
+    findMinMaxWithCUB(d_px, n, &minX, &maxX);
     
     float minY = FLT_MAX, maxY = -FLT_MAX;
     for (int i = 0; i < n; i++) {
@@ -508,34 +496,19 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     
     int currentN = n;
     bool changed = true;
-    int iteration = 0;
-
-    printf("[DEBUG] Starting QuickHull main loop with n=%d, numPartitions=%d\n", currentN, numPartitions);
-    fflush(stdout);
-
+    
     // Main loop (steps 7-53)
     while (changed && currentN > 0) {
         changed = false;
         int numBlocks = (currentN + BLOCK_SIZE - 1) / BLOCK_SIZE;
         
-        printf("[DEBUG] Iteration %d: currentN=%d, numPartitions=%d, numBlocks=%d\n", 
-               iteration, currentN, numPartitions, numBlocks);
-        fflush(stdout);
-
         // Steps 8-16: Compute distances
-        printf("[DEBUG]   Computing distances...\n"); fflush(stdout);
         int sharedMemSize = 2 * (BLOCK_SIZE + 2) * sizeof(float);
         computeDistancesKernel<<<numBlocks, BLOCK_SIZE, sharedMemSize>>>(
             d_px, d_py, d_labels, d_ansX, d_ansY, ansSize, d_distances, currentN);
-        cudaError_t err = cudaDeviceSynchronize();
-        if (err != cudaSuccess) {
-            printf("[ERROR] computeDistancesKernel failed: %s\n", cudaGetErrorString(err));
-            fflush(stdout);
-        }
-        printf("[DEBUG]   Distances computed.\n"); fflush(stdout);
+        cudaDeviceSynchronize();
         
         // Steps 17-20: Initialize arrays
-        printf("[DEBUG]   Initializing state/maxIdx arrays...\n"); fflush(stdout);
         cudaMemset(d_state, 0, numPartitions * sizeof(int));
         
         // Initialize maxIdx to INT_MAX (so atomicMin can find the minimum index)
@@ -544,62 +517,38 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         
         // Steps 22-30: Find max distance point per partition using segmented scan
         // Create segment flags (1 at start of each partition)
-        printf("[DEBUG]   Creating segment flags...\n"); fflush(stdout);
         createSegmentFlagsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_labels, d_segmentFlags, currentN);
-        err = cudaDeviceSynchronize();
-        if (err != cudaSuccess) {
-            printf("[ERROR] createSegmentFlagsKernel failed: %s\n", cudaGetErrorString(err));
-            fflush(stdout);
-        }
+        cudaDeviceSynchronize();
         
         // Perform segmented max scan (negative distances won't win against positive ones)
-        printf("[DEBUG]   Performing segmented max scan...\n"); fflush(stdout);
-        cudppSegmentedMaxScan(d_distances, d_segmentFlags, d_scanResult, currentN);
-        printf("[DEBUG]   Segmented max scan done.\n"); fflush(stdout);
+        cubSegmentedMaxReduce(d_distances, d_segmentFlags, d_scanResult, currentN);
         
         // Find max points from scan result (stores index atomically)
-        printf("[DEBUG]   Finding max points from scan...\n"); fflush(stdout);
         findMaxPointFromScanKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_px, d_py, d_labels, d_distances, d_scanResult, d_segmentFlags,
             d_maxIdx, d_state, currentN);
-        err = cudaDeviceSynchronize();
-        if (err != cudaSuccess) {
-            printf("[ERROR] findMaxPointFromScanKernel failed: %s\n", cudaGetErrorString(err));
-            fflush(stdout);
-        }
+        cudaDeviceSynchronize();
         
         cudaMemcpy(h_state, d_state, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_maxIdx, d_maxIdx, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
         
-        printf("[DEBUG]   State/maxIdx for partitions:\n"); fflush(stdout);
-        for (int i = 0; i < numPartitions; i++) {
-            printf("[DEBUG]     partition %d: state=%d, maxIdx=%d\n", i, h_state[i], h_maxIdx[i]);
-        }
-        fflush(stdout);
-
         for (int i = 0; i < numPartitions; i++) {
             if (h_state[i] == 1) {
                 changed = true;
                 break;
             }
         }
-        printf("[DEBUG]   changed=%d\n", changed ? 1 : 0); fflush(stdout);
         if (!changed) break;
         
         // Steps 32-35: Compute prefix sum of state array
-        printf("[DEBUG]   Computing state prefix sum...\n"); fflush(stdout);
-        cudppExclusiveScan(d_state, d_statePrefix, numPartitions);
+        cubExclusiveScan(d_state, d_statePrefix, numPartitions);
         cudaMemcpy(h_statePrefix, d_statePrefix, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
-        printf("[DEBUG]   State prefix: ");
-        for (int i = 0; i < numPartitions; i++) printf("%d ", h_statePrefix[i]);
-        printf("\n"); fflush(stdout);
         
         // Steps 50-52 (executed before 36-47): Update ANS array
         // Note: We update ANS first because classifyPointsKernel reads the new
         // partition endpoints (including MAX points) from ANS. This is equivalent
         // to the pseudocode which uses a separate MAX[] array during classification.
-        printf("[DEBUG]   Updating ANS array...\n"); fflush(stdout);
         float *h_ansXNew = new float[maxAnsSize];
         float *h_ansYNew = new float[maxAnsSize];
         int newAnsSize = 0;
@@ -641,71 +590,42 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         
         delete[] h_ansXNew;
         delete[] h_ansYNew;
-
-        printf("[DEBUG]   ANS updated: ansSize=%d, newNumPartitions=%d\n", ansSize, newNumPartitions);
-        fflush(stdout);
-
+        
         // Steps 36-47: Compact and relabel using prefix scans (as per paper)
         // Now that ANS contains the new MAX points, we can classify points.
         // a) Classify points into left/right sub-partitions
-        printf("[DEBUG]   Classifying points...\n"); fflush(stdout);
         classifyPointsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_px, d_py, d_labels, d_distances, d_statePrefix,
             d_ansX, d_ansY, d_goesLeft, d_goesRight, currentN);
-        err = cudaDeviceSynchronize();
-        if (err != cudaSuccess) {
-            printf("[ERROR] classifyPointsKernel failed: %s\n", cudaGetErrorString(err));
-            fflush(stdout);
-        }
+        cudaDeviceSynchronize();
         
         // Create segment flags for segmented scans
-        printf("[DEBUG]   Creating partition flags...\n"); fflush(stdout);
         createPartitionFlagsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_labels, d_segmentFlags, currentN);
-        err = cudaDeviceSynchronize();
-        if (err != cudaSuccess) {
-            printf("[ERROR] createPartitionFlagsKernel failed: %s\n", cudaGetErrorString(err));
-            fflush(stdout);
-        }
+        cudaDeviceSynchronize();
         
         // b) Use prefix scan to determine indices for left sub-partition
-        printf("[DEBUG]   Segmented exclusive scan for left...\n"); fflush(stdout);
-        cudppSegmentedExclusiveScan(d_goesLeft, d_segmentFlags, d_leftScan, currentN);
+        cubSegmentedExclusiveScan(d_goesLeft, d_segmentFlags, d_leftScan, currentN);
         
         // c) Use prefix scan to determine indices for right sub-partition  
-        printf("[DEBUG]   Segmented exclusive scan for right...\n"); fflush(stdout);
-        cudppSegmentedExclusiveScan(d_goesRight, d_segmentFlags, d_rightScan, currentN);
+        cubSegmentedExclusiveScan(d_goesRight, d_segmentFlags, d_rightScan, currentN);
         
         // Get total counts per partition using inclusive scan
-        printf("[DEBUG]   Segmented inclusive scans...\n"); fflush(stdout);
-        cudppSegmentedInclusiveScan(d_goesLeft, d_segmentFlags, d_leftScanInc, currentN);
-        cudppSegmentedInclusiveScan(d_goesRight, d_segmentFlags, d_rightScanInc, currentN);
-        printf("[DEBUG]   Scans done.\n"); fflush(stdout);
+        cubSegmentedInclusiveScan(d_goesLeft, d_segmentFlags, d_leftScanInc, currentN);
+        cubSegmentedInclusiveScan(d_goesRight, d_segmentFlags, d_rightScanInc, currentN);
         
         // Extract counts from the last element of each segment
-        printf("[DEBUG]   Extracting partition counts...\n"); fflush(stdout);
         cudaMemset(d_leftCount, 0, numPartitions * sizeof(int));
         cudaMemset(d_rightCount, 0, numPartitions * sizeof(int));
         extractPartitionCountsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_labels, d_segmentFlags, d_leftScanInc, d_rightScanInc,
             d_leftCount, d_rightCount, currentN);
-        err = cudaDeviceSynchronize();
-        if (err != cudaSuccess) {
-            printf("[ERROR] extractPartitionCountsKernel failed: %s\n", cudaGetErrorString(err));
-            fflush(stdout);
-        }
+        cudaDeviceSynchronize();
         
         cudaMemcpy(h_leftCount, d_leftCount, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_rightCount, d_rightCount, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
         
-        printf("[DEBUG]   Left/Right counts per partition:\n");
-        for (int i = 0; i < numPartitions; i++) {
-            printf("[DEBUG]     partition %d: left=%d, right=%d\n", i, h_leftCount[i], h_rightCount[i]);
-        }
-        fflush(stdout);
-
         // Compute partition start positions
-        printf("[DEBUG]   Computing partition start positions...\n"); fflush(stdout);
         h_partitionStart[0] = 0;
         int newPartIdx = 0;
         for (int i = 0; i < numPartitions; i++) {
@@ -724,24 +644,14 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         
         int newN = h_partitionStart[newNumPartitions];
         
-        printf("[DEBUG]   newN=%d, partition starts: ", newN);
-        for (int i = 0; i <= newNumPartitions; i++) printf("%d ", h_partitionStart[i]);
-        printf("\n"); fflush(stdout);
-
         if (newN > 0) {
-            printf("[DEBUG]   Compacting points...\n"); fflush(stdout);
             cudaMemcpy(d_partitionStart, h_partitionStart, (newNumPartitions + 1) * sizeof(int), cudaMemcpyHostToDevice);
             
             compactWithScanKernel<<<numBlocks, BLOCK_SIZE>>>(
                 d_px, d_py, d_labels, d_goesLeft, d_goesRight,
                 d_leftScan, d_rightScan, d_leftCount, d_statePrefix,
                 d_state, d_partitionStart, d_pxNew, d_pyNew, d_labelsNew, currentN);
-            err = cudaDeviceSynchronize();
-            if (err != cudaSuccess) {
-                printf("[ERROR] compactWithScanKernel failed: %s\n", cudaGetErrorString(err));
-                fflush(stdout);
-            }
-            printf("[DEBUG]   Compact done, swapping buffers.\n"); fflush(stdout);
+            cudaDeviceSynchronize();
             
             float *tmp; int *tmpi;
             tmp = d_px; d_px = d_pxNew; d_pxNew = tmp;
@@ -751,21 +661,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         
         currentN = newN;
         numPartitions = newNumPartitions;
-        iteration++;
-        printf("[DEBUG] End of iteration %d: currentN=%d, numPartitions=%d\n\n", 
-               iteration-1, currentN, numPartitions);
-        fflush(stdout);
-        
-        // Safety check to prevent infinite loops
-        if (iteration > 100) {
-            printf("[ERROR] Too many iterations, breaking to prevent infinite loop!\n");
-            fflush(stdout);
-            break;
-        }
     }
-    
-    printf("[DEBUG] Main loop ended. Final ansSize=%d\n", ansSize);
-    fflush(stdout);
     
     // Extract hull points
     int hullSize = 0;
