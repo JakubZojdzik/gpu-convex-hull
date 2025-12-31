@@ -332,9 +332,9 @@ void cubSegmentedExclusiveScan(int *d_input, unsigned int *d_flags, int *d_outpu
     cudaMemcpy(d_offsets, h_offsets.data(), (num_segments+1) * sizeof(int), cudaMemcpyHostToDevice);
     void *d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
-    cub::DeviceSegmentedScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
+    cub::DeviceScan::ExclusiveSegmentedSum(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
     cudaMalloc(&d_temp_storage, temp_storage_bytes);
-    cub::DeviceSegmentedScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
+    cub::DeviceScan::ExclusiveSegmentedSum(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
     cudaFree(d_temp_storage);
     cudaFree(d_offsets);
     delete[] h_flags;
@@ -360,9 +360,9 @@ void cubSegmentedInclusiveScan(int *d_input, unsigned int *d_flags, int *d_outpu
     cudaMemcpy(d_offsets, h_offsets.data(), (num_segments+1) * sizeof(int), cudaMemcpyHostToDevice);
     void *d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
-    cub::DeviceSegmentedScan::InclusiveSum(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
+    cub::DeviceScan::InclusiveSegmentedSum(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
     cudaMalloc(&d_temp_storage, temp_storage_bytes);
-    cub::DeviceSegmentedScan::InclusiveSum(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
+    cub::DeviceScan::InclusiveSegmentedSum(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
     cudaFree(d_temp_storage);
     cudaFree(d_offsets);
     delete[] h_flags;
