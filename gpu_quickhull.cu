@@ -3,6 +3,7 @@
 #include <float.h>
 #include <climits>
 #include <vector>
+#include <algorithm>
 #include <cub/device/device_segmented_scan.cuh>
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cub/device/device_scan.cuh>
@@ -498,6 +499,25 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
             d_px, d_py, d_labels, d_ansX, d_ansY, ansSize, d_distances, currentN);
         cudaDeviceSynchronize();
 
+        // Debug: Check some distance values
+        float *h_distances = new float[currentN];
+        cudaMemcpy(h_distances, d_distances, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        printf("DEBUG: First 10 distances: ");
+        for (int i = 0; i < std::min(10, currentN); i++) {
+            printf("%.3f ", h_distances[i]);
+        }
+        printf("\n");
+        
+        // Count positive distances
+        int posDistCount = 0;
+        float maxDist = -FLT_MAX;
+        for (int i = 0; i < currentN; i++) {
+            if (h_distances[i] > 0) posDistCount++;
+            if (h_distances[i] > maxDist) maxDist = h_distances[i];
+        }
+        printf("DEBUG: Positive distances: %d/%d, max distance: %.6f\n", posDistCount, currentN, maxDist);
+        delete[] h_distances;
+
         // Steps 17-20
         cudaMemset(d_state, 0, numPartitions * sizeof(int));
 
@@ -514,6 +534,16 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
 
         // Perform segmented max scan (negative distances won't win against positive ones)
         cubSegmentedMaxReduce(d_distances, d_segmentFlags, d_scanResult, currentN);
+
+        // Debug: Check scan results
+        float *h_scanResult = new float[currentN];
+        cudaMemcpy(h_scanResult, d_scanResult, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        printf("DEBUG: Segmented max results: ");
+        for (int i = 0; i < std::min(5, currentN); i++) {
+            printf("%.3f ", h_scanResult[i]);
+        }
+        printf("\n");
+        delete[] h_scanResult;
 
         // Find max points from scan result (stores index atomically)
         findMaxPointFromScanKernel<<<numBlocks, BLOCK_SIZE>>>(
