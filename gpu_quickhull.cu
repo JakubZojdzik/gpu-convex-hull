@@ -506,8 +506,8 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         // Debug: Check some distance values
         float *h_distances = new float[currentN];
         cudaMemcpy(h_distances, d_distances, currentN * sizeof(float), cudaMemcpyDeviceToHost);
-        printf("DEBUG: First 10 distances: ");
-        for (int i = 0; i < std::min(10, currentN); i++) {
+        printf("DEBUG: All distances: ");
+        for (int i = 0; i < currentN; i++) {
             printf("%.3f ", h_distances[i]);
         }
         printf("\n");
@@ -543,7 +543,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         float *h_scanResult = new float[currentN];
         cudaMemcpy(h_scanResult, d_scanResult, currentN * sizeof(float), cudaMemcpyDeviceToHost);
         printf("DEBUG: Segmented max results: ");
-        for (int i = 0; i < std::min(5, currentN); i++) {
+        for (int i = 0; i < currentN; i++) {
             printf("%.3f ", h_scanResult[i]);
         }
         printf("\n");
@@ -655,6 +655,13 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
 
         cudaMemcpy(h_leftCount, d_leftCount, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_rightCount, d_rightCount, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
+
+        // Debug: Check partition counts
+        printf("DEBUG: Partition counts: ");
+        for (int i = 0; i < numPartitions; i++) {
+            printf("P%d:left=%d,right=%d ", i, h_leftCount[i], h_rightCount[i]);
+        }
+        printf("\n");
 
         // Compute partition start positions
         h_partitionStart[0] = 0;
