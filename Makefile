@@ -1,10 +1,11 @@
-
 CUDA_HOME ?= /usr/local/cuda
-INC := -I$(CUDA_HOME)/include -I. -Iheaders -I../cccl/thrust -I../cccl/libcudacxx/include -I../cccl/cub
+CCCL_HOME ?= /home/ctsadmin/studia/cccl
+
+INC := -I. -Iheaders -I$(CCCL_HOME)/cub -I$(CCCL_HOME)/libcudacxx/include -I$(CCCL_HOME)/thrust -I$(CUDA_HOME)/include
 LIB := -L$(CUDA_HOME)/lib64 -lcudart -ldl
 
 CXXFLAGS  := -O2 -std=c++17 -fPIC
-NVCCFLAGS := -O2 -lineinfo -arch=sm_86 --ptxas-options=-v --use_fast_math
+NVCCFLAGS := -O2 -std=c++17 -lineinfo -arch=sm_86 --ptxas-options=-v --use_fast_math
 
 CPU_SRCS := \
 	cpu_graham.cpp \
