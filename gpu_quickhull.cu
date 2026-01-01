@@ -140,25 +140,29 @@ __global__ void findMaxPointFromScanKernel(float *px, float *py, int *labels,
     if (idx >= n) return;
 
     float d = distances[idx];
-    if (d <= 0) return;
-
     int label = labels[idx];
 
     // Check if this is the last element of the segment or next element starts new segment
     // Note: check idx < n-1 first to avoid out-of-bounds read of flags[n]
     bool isLastInSegment = (idx == n - 1) || (idx < n - 1 && flags[idx + 1] == 1);
 
+    // Regardless of this point's distance, the thread that corresponds to the
+    // last element of a segment must set the partition state based on the
+    // computed segment maximum (scanResult). Previously we returned early for
+    // d <= 0 which skipped this and left state unset when the last element
+    // itself had non-positive distance.
     if (isLastInSegment) {
-        // scanResult[idx] contains the max distance for this segment
         float maxDist = scanResult[idx];
         state[label] = (maxDist > 0) ? 1 : 0;
     }
 
-    // Find the actual point with max distance
-    // Use atomicMin to ensure only one thread wins (the one with lowest index)
-    float maxInSegment = scanResult[idx];
-    if (d == maxInSegment) {
-        atomicMin(&maxIdx[label], idx);
+    // If this point has positive distance and matches the segment maximum,
+    // try to publish its index as the segment max index.
+    if (d > 0) {
+        float maxInSegment = scanResult[idx];
+        if (d == maxInSegment) {
+            atomicMin(&maxIdx[label], idx);
+        }
     }
 }
 
