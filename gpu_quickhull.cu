@@ -5,19 +5,14 @@
 #include <vector>
 #include <cub/device/device_segmented_scan.cuh>
 #include <cub/device/device_scan.cuh>
+#include <cub/device/device_reduce.cuh>
 #include "utils.h"
 
 
-// Block size for CUDA kernels (as per paper: chunks of 512)
 #define BLOCK_SIZE 512
 
 
-
-// ============================================================================
-// Steps 5-6: Find min and max X using CUDPP reduce
-// Paper: "We have implemented steps 5 and 6 by using two prefix scans
-// (taking max operator once and min operator once)"
-// ============================================================================
+// Steps 5-6
 void findMinMaxWithCUB(float *d_px, int n, float *minX, float *maxX) {
     // CUB DeviceReduce for min
     float *d_minX;
@@ -44,10 +39,6 @@ void findMinMaxWithCUB(float *d_px, int n, float *minX, float *maxX) {
     cudaFree(d_maxX);
 }
 
-// ============================================================================
-// CUDPP-based exclusive scan for prefix sums (used in steps 32-35, 36-47)
-// Paper: "We implemented steps 32-35 and 50-52 by using one prefix scan"
-// ============================================================================
 void cubExclusiveScan(int *d_input, int *d_output, int n) {
     void *d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
@@ -57,15 +48,7 @@ void cubExclusiveScan(int *d_input, int *d_output, int n) {
     cudaFree(d_temp_storage);
 }
 
-// ============================================================================
-// Steps 8-16: Compute distances with shared memory optimization
-// Paper: "As the points in each chunk are ordered on the basis of the label
-// values, we have loaded only the required chunk of the ANS array into the
-// shared memory"
-//
-// Since points are sorted by label, consecutive threads access same/nearby labels.
-// We load the relevant ANS entries into shared memory for fast access.
-// ============================================================================
+// Steps 8-16
 __global__ void computeDistancesKernel(float *px, float *py, int *labels,
                                         float *ansX, float *ansY, int ansSize,
                                         float *distances, int n) {
@@ -123,15 +106,7 @@ __global__ void computeDistancesKernel(float *px, float *py, int *labels,
     distances[idx] = d;
 }
 
-// ============================================================================
-// Steps 22-30: Find max distance point per partition using segmented scan
-// Paper: "We have implemented steps 22-30 using matrix segmented scan approach"
-// Reference: Sengupta et al. "Scan Primitives for GPU Computing"
-//
-// Uses CUDPP's cudppSegmentedScan with MAX operator to find the maximum
-// distance within each partition (segment).
-// ============================================================================
-
+// Steps 22-30
 // Create segment head flags: 1 at start of each partition, 0 elsewhere
 __global__ void createSegmentFlagsKernel(int *labels, unsigned int *flags, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -177,7 +152,6 @@ __global__ void findMaxPointFromScanKernel(float *px, float *py, int *labels,
     }
 }
 
-// CUDPP segmented scan for finding max per partition
 void cubSegmentedMaxReduce(float *d_input, unsigned int *d_flags, float *d_output, int n) {
     // d_flags: 1 at segment start, 0 elsewhere
     // Convert flags to segment offsets
@@ -207,10 +181,7 @@ void cubSegmentedMaxReduce(float *d_input, unsigned int *d_flags, float *d_outpu
     delete[] h_flags;
 }
 
-// ============================================================================
-// Steps 36-47: Compact and relabel points using prefix scans
-// ============================================================================
-
+// Steps 36-47
 __global__ void classifyPointsKernel(float *px, float *py, int *labels,
                                       float *distances, int *statePrefix,
                                       float *ansX, float *ansY,
@@ -314,7 +285,7 @@ __global__ void extractPartitionCountsKernel(int *labels, unsigned int *flags,
     }
 }
 
-// CUDPP segmented exclusive scan for computing indices
+// segmented exclusive scan for computing indices
 void cubSegmentedExclusiveScan(int *d_input, unsigned int *d_flags, int *d_output, int n) {
     // Convert flags to segment offsets
     int num_segments = 0;
@@ -342,7 +313,7 @@ void cubSegmentedExclusiveScan(int *d_input, unsigned int *d_flags, int *d_outpu
         delete[] h_flags;
 }
 
-// CUDPP segmented inclusive scan for getting total counts per partition
+// segmented inclusive scan for getting total counts per partition
 void cubSegmentedInclusiveScan(int *d_input, unsigned int *d_flags, int *d_output, int n) {
     // Convert flags to segment offsets
     int num_segments = 0;
@@ -370,9 +341,7 @@ void cubSegmentedInclusiveScan(int *d_input, unsigned int *d_flags, int *d_outpu
         delete[] h_flags;
 }
 
-// ============================================================================
-// Main QuickHull function for GPU
-// ============================================================================
+// Main QuickHull Function
 extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
                               float *result_x, float *result_y, int *M) {
     if (n <= 2) {
@@ -383,8 +352,6 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         *M = n;
         return;
     }
-
-    // No CUDPP init needed for CUB
 
     // Device memory
     float *d_px, *d_py, *d_pxNew, *d_pyNew;
@@ -402,7 +369,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     cudaMemcpy(d_px, h_px, n * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_py, h_py, n * sizeof(float), cudaMemcpyHostToDevice);
 
-    // Steps 5-6: Find min and max points
+    // Steps 5-6
     float minX, maxX;
     findMinMaxWithCUB(d_px, n, &minX, &maxX);
 
@@ -429,7 +396,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     cudaMemcpy(d_ansX, h_ansX, ansSize * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_ansY, h_ansY, ansSize * sizeof(float), cudaMemcpyHostToDevice);
 
-    // Steps 2-4: Initialize labels and sort by label
+    // Steps 2-4
     float *h_pxSorted = new float[n];
     float *h_pySorted = new float[n];
     int *h_labelsSorted = new int[n];
@@ -467,7 +434,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     int *d_leftScanInc, *d_rightScanInc;
     int *d_leftCount, *d_rightCount, *d_partitionStart;
 
-    // Arrays for segmented scan (steps 22-30)
+    // steps 22-30
     unsigned int *d_segmentFlags;
     float *d_scanResult;
 
@@ -499,25 +466,26 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     int currentN = n;
     bool changed = true;
 
-    // Main loop (steps 7-53)
+    // steps 7-53
     while (changed && currentN > 0) {
         changed = false;
         int numBlocks = (currentN + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-        // Steps 8-16: Compute distances
+        // Steps 8-16
         int sharedMemSize = 2 * (BLOCK_SIZE + 2) * sizeof(float);
         computeDistancesKernel<<<numBlocks, BLOCK_SIZE, sharedMemSize>>>(
             d_px, d_py, d_labels, d_ansX, d_ansY, ansSize, d_distances, currentN);
         cudaDeviceSynchronize();
 
-        // Steps 17-20: Initialize arrays
+        // Steps 17-20
         cudaMemset(d_state, 0, numPartitions * sizeof(int));
 
         // Initialize maxIdx to INT_MAX (so atomicMin can find the minimum index)
         std::vector<int> initMaxIdx(numPartitions, INT_MAX);
         cudaMemcpy(d_maxIdx, initMaxIdx.data(), numPartitions * sizeof(int), cudaMemcpyHostToDevice);
 
-        // Steps 22-30: Find max distance point per partition using segmented scan
+        // Steps 22-30
+        // Find max distance point per partition using segmented scan
         // Create segment flags (1 at start of each partition)
         createSegmentFlagsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_labels, d_segmentFlags, currentN);
@@ -543,11 +511,11 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         }
         if (!changed) break;
 
-        // Steps 32-35: Compute prefix sum of state array
+        // Steps 32-35
         cubExclusiveScan(d_state, d_statePrefix, numPartitions);
         cudaMemcpy(h_statePrefix, d_statePrefix, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
 
-        // Steps 50-52 (executed before 36-47): Update ANS array
+        // Steps 50-52
         // Note: We update ANS first because classifyPointsKernel reads the new
         // partition endpoints (including MAX points) from ANS. This is equivalent
         // to the pseudocode which uses a separate MAX[] array during classification.
@@ -593,7 +561,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         delete[] h_ansXNew;
         delete[] h_ansYNew;
 
-        // Steps 36-47: Compact and relabel using prefix scans (as per paper)
+        // Steps 36-47
         // Now that ANS contains the new MAX points, we can classify points.
         // a) Classify points into left/right sub-partitions
         classifyPointsKernel<<<numBlocks, BLOCK_SIZE>>>(
