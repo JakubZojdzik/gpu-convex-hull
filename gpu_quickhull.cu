@@ -391,6 +391,8 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         if (h_px[i] == minX && h_py[i] < minY) minY = h_py[i];
         if (h_px[i] == maxX && h_py[i] > maxY) maxY = h_py[i];
     }
+    
+    printf("DEBUG: Initial extreme points: minX=%.3f,minY=%.3f, maxX=%.3f,maxY=%.3f\n", minX, minY, maxX, maxY);
 
     // Initialize ANS array
     int maxAnsSize = n + 2;
@@ -414,7 +416,8 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     float *h_pySorted = new float[n];
     int *h_labelsSorted = new int[n];
     int idx0 = 0, idx1 = n-1;
-
+    
+    int positiveCount = 0, negativeCount = 0;
     for (int i = 0; i < n; i++) {
         float d = (maxX - minX) * (h_py[i] - minY) - (maxY - minY) * (h_px[i] - minX);
         if (d > 0) {
@@ -422,13 +425,16 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
             h_pySorted[idx0] = h_py[i];
             h_labelsSorted[idx0] = 0;
             idx0++;
+            positiveCount++;
         } else {
             h_pxSorted[idx1] = h_px[i];
             h_pySorted[idx1] = h_py[i];
             h_labelsSorted[idx1] = 1;
             idx1--;
+            negativeCount++;
         }
     }
+    printf("DEBUG: Initial partitioning: positive=%d, negative=%d\n", positiveCount, negativeCount);
 
     cudaMemcpy(d_px, h_pxSorted, n * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_py, h_pySorted, n * sizeof(float), cudaMemcpyHostToDevice);
@@ -478,9 +484,11 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
 
     int currentN = n;
     bool changed = true;
+    int iteration = 0;
 
     // steps 7-53
     while (changed && currentN > 0) {
+        printf("DEBUG: Iteration %d: currentN=%d, numPartitions=%d\n", iteration++, currentN, numPartitions);
         changed = false;
         int numBlocks = (currentN + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
@@ -515,6 +523,12 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
 
         cudaMemcpy(h_state, d_state, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_maxIdx, d_maxIdx, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
+
+        printf("DEBUG: Partition states: ");
+        for (int i = 0; i < numPartitions; i++) {
+            printf("P%d:state=%d,maxIdx=%d ", i, h_state[i], h_maxIdx[i]);
+        }
+        printf("\n");
 
         for (int i = 0; i < numPartitions; i++) {
             if (h_state[i] == 1) {
@@ -626,6 +640,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         }
 
         int newN = h_partitionStart[newNumPartitions];
+        printf("DEBUG: After partitioning: newN=%d, newNumPartitions=%d\n", newN, newNumPartitions);
 
         if (newN > 0) {
             cudaMemcpy(d_partitionStart, h_partitionStart, (newNumPartitions + 1) * sizeof(int), cudaMemcpyHostToDevice);
@@ -648,12 +663,15 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
 
     // Extract hull points
     int hullSize = 0;
+    printf("DEBUG: Final ansSize=%d\n", ansSize);
     for (int i = 0; i < ansSize - 1; i++) {
+        printf("DEBUG: Hull point %d: (%.3f, %.3f)\n", i, h_ansX[i], h_ansY[i]);
         result_x[hullSize] = h_ansX[i];
         result_y[hullSize] = h_ansY[i];
         hullSize++;
     }
     *M = hullSize;
+    printf("DEBUG: Final hull size: %d\n", hullSize);
 
     // Cleanup
     cudaFree(d_px); cudaFree(d_py);
