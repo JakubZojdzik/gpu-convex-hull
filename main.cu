@@ -6,7 +6,7 @@
 #include <cuda_runtime.h>
 
 // CPU
-extern void grahamScan(
+extern void monotonChain(
     float *p_x, float *p_y, int N,
     float *result_x, float *result_y, int *M
 );
@@ -51,11 +51,11 @@ int main()
 
     /* ================= CPU ================= */
     auto cpu_start = std::chrono::high_resolution_clock::now();
-    grahamScan(px, py, N, result_x, result_y, &M_cpu);
+    monotonChain(px, py, N, result_x, result_y, &M_cpu);
     auto cpu_end = std::chrono::high_resolution_clock::now();
     double cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
 
-    printf("CPU Graham Scan:\n[");
+    printf("CPU Monotone chain:\n[");
     for (int i = 0; i < M_cpu; i++) {
         printf("(%.3f, %.3f)", result_x[i], result_y[i]);
         if (i < M_cpu - 1) printf(", ");
