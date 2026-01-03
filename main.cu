@@ -69,10 +69,10 @@ int main()
     printf("Hull size: %d\n", M_cpu);
     printf("Time: %.3f ms\n\n", cpu_ms);
 
-    auto cpu_start = std::chrono::high_resolution_clock::now();
+    cpu_start = std::chrono::high_resolution_clock::now();
     grahamScan(px, py, N, result_x, result_y, &M_cpu);
-    auto cpu_end = std::chrono::high_resolution_clock::now();
-    double cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
+    cpu_end = std::chrono::high_resolution_clock::now();
+    cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
 
     printf("CPU Graham scan:\n[");
     // for (int i = 0; i < M_cpu; i++) {
