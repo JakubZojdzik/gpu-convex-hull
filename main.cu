@@ -38,12 +38,12 @@ int main()
         }
     }
 
-    printf("Input Points:\n[");
-    for (int i = 0; i < N; i++) {
-        printf("(%.3f, %.3f)", px[i], py[i]);
-        if (i < N - 1) printf(", ");
-    }
-    printf("]\n");
+    // printf("Input Points:\n[");
+    // for (int i = 0; i < N; i++) {
+    //     printf("(%.3f, %.3f)", px[i], py[i]);
+    //     if (i < N - 1) printf(", ");
+    // }
+    // printf("]\n");
 
     float *result_x = (float*) malloc(sizeof(float) * N);
     float *result_y = (float*) malloc(sizeof(float) * N);
