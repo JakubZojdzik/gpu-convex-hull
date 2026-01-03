@@ -221,6 +221,18 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     while (true) {
         bool anyChanged = false;
 
+        // Debug: print current ans
+        printf("DEBUG: Current ans (%zu points): ", ans.size());
+        for (size_t i = 0; i < ans.size(); i++) {
+            printf("(%.3f,%.3f) ", ans[i].x, ans[i].y);
+        }
+        printf("\n");
+        printf("DEBUG: Current partitions (%zu): ", partitions.size());
+        for (size_t i = 0; i < partitions.size(); i++) {
+            printf("[start=%d,count=%d] ", partitions[i].start, partitions[i].count);
+        }
+        printf("\n");
+
         // For each partition, find max point and split
         std::vector<Point> newAns;
         std::vector<Partition> newPartitions;
@@ -237,7 +249,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             newAns.push_back(L);
 
             if (part.count == 0) {
-                // Empty partition, no max point
+                // Empty partition, no max point - partition stays empty
+                newPartitions.push_back({(int)allNewPx.size(), 0});
                 continue;
             }
 
@@ -276,7 +289,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             cudaFree(d_blockMaxIdx);
 
             if (h_maxIdx < 0 || h_maxDist <= 0) {
-                // No point outside the line, partition is done
+                // No point outside the line, partition is done - keep it empty for next iteration
+                newPartitions.push_back({(int)allNewPx.size(), 0});
                 continue;
             }
 
@@ -286,6 +300,9 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             float maxPx, maxPy;
             cudaMemcpy(&maxPx, d_px + part.start + h_maxIdx, sizeof(float), cudaMemcpyDeviceToHost);
             cudaMemcpy(&maxPy, d_py + part.start + h_maxIdx, sizeof(float), cudaMemcpyDeviceToHost);
+
+            printf("DEBUG: Partition %zu: found max point (%.3f,%.3f) at local idx %d, dist=%.3f\n", 
+                   p, maxPx, maxPy, h_maxIdx, h_maxDist);
 
             // Add max point to ANS (between L and R)
             newAns.push_back({maxPx, maxPy});
