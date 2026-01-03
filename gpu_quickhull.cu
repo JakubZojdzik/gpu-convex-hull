@@ -120,145 +120,68 @@ void findMinMaxX_CUB(const float *d_px,
 }
 
 
+// Compute distances for all points at once using labels
+// Each point has a label indicating which partition it belongs to
+// The partition's line segment is from ans[label] to ans[label+1]
+__global__ void computeDistancesKernel(float *px, float *py, int *labels,
+                                        float *ansX, float *ansY, int ansSize,
+                                        float *distances, int n) {
+    // Shared memory for ANS chunk - each partition needs 2 consecutive points
+    extern __shared__ float sharedAns[];
+    float *sAnsX = sharedAns;
+    float *sAnsY = &sharedAns[BLOCK_SIZE + 2];
 
-// Compute perpendicular distance from line (lx,ly)->(rx,ry) for each point
-// Positive distance = point is to the LEFT of the directed line
-__global__ void computeDistancesSimpleKernel(float *px, float *py,
-                                              float lx, float ly, float rx, float ry,
-                                              float *distances, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) return;
-
-    float curX = px[idx];
-    float curY = py[idx];
-
-    // Cross product: (r - l) x (cur - l)
-    float d = (rx - lx) * (curY - ly) - (ry - ly) * (curX - lx);
-    distances[idx] = d;
-}
-
-// Find index of point with maximum positive distance
-// Simple kernel that each thread writes its candidate, then host finds max
-// This is simpler and more correct than trying to do atomic argmax
-__global__ void findMaxDistPointKernel(float *distances, float *blockMaxDist, int *blockMaxIdx, int n) {
-    __shared__ float sharedDist[BLOCK_SIZE];
-    __shared__ int sharedIdx[BLOCK_SIZE];
-
     int tid = threadIdx.x;
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    // Initialize with invalid values
-    sharedDist[tid] = -FLT_MAX;
-    sharedIdx[tid] = -1;
+    // Find the range of labels in this block
+    __shared__ int minLabel, maxLabel;
 
-    if (idx < n && distances[idx] > 0) {
-        sharedDist[tid] = distances[idx];
-        sharedIdx[tid] = idx;
+    if (tid == 0) {
+        minLabel = ansSize;
+        maxLabel = -1;
     }
     __syncthreads();
 
-    // Reduction within block
-    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-        if (tid < stride) {
-            if (sharedDist[tid + stride] > sharedDist[tid]) {
-                sharedDist[tid] = sharedDist[tid + stride];
-                sharedIdx[tid] = sharedIdx[tid + stride];
-            }
+    if (idx < n) {
+        int label = labels[idx];
+        atomicMin(&minLabel, label);
+        atomicMax(&maxLabel, label);
+    }
+    __syncthreads();
+
+    // Load required ANS entries into shared memory
+    // We need indices [minLabel, maxLabel+1] from global ANS
+    // Store them at local indices [0, ansRange-1] in shared memory
+    int ansRange = maxLabel - minLabel + 2;
+    if (tid < ansRange) {
+        if ((minLabel + tid) >= ansSize) {
+            // impossible
+            printf("Error: ans index out of range in computeDistancesKernel\n");
+            return;
         }
-        __syncthreads();
+        sAnsX[tid] = ansX[minLabel + tid];
+        sAnsY[tid] = ansY[minLabel + tid];
     }
+    __syncthreads();
 
-    // Block 0 writes its result
-    if (tid == 0) {
-        blockMaxDist[blockIdx.x] = sharedDist[0];
-        blockMaxIdx[blockIdx.x] = sharedIdx[0];
-    }
-}
-
-// Host function to find max among block results
-void findMaxPointHost(float *h_blockMaxDist, int *h_blockMaxIdx, int numBlocks, 
-                      int *outIdx, float *outDist) {
-    *outIdx = -1;
-    *outDist = -FLT_MAX;
-    for (int i = 0; i < numBlocks; i++) {
-        if (h_blockMaxDist[i] > *outDist) {
-            *outDist = h_blockMaxDist[i];
-            *outIdx = h_blockMaxIdx[i];
-        }
-    }
-}
-
-// Mark points that should go to left partition (positive distance from L->M)
-// or right partition (positive distance from M->R)
-// We need to recompute distances to the two new edges
-// maxIdx is the index of the max point which should be EXCLUDED from both partitions
-// Also stores the new distances for each point (for use in next iteration)
-__global__ void classifyPointsForSplitKernel(float *px, float *py, float *oldDistances,
-                                              float lx, float ly, float mx, float my, float rx, float ry,
-                                              int maxIdx,
-                                              int *goesLeft, int *goesRight,
-                                              float *newDistLeft, float *newDistRight, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
 
-    // Exclude the max point itself - it becomes a hull vertex, not a candidate
-    if (idx == maxIdx) {
-        goesLeft[idx] = 0;
-        goesRight[idx] = 0;
-        newDistLeft[idx] = 0;
-        newDistRight[idx] = 0;
-        return;
-    }
+    int label = labels[idx];
+    int localLabel = label - minLabel;
 
-    // Only consider points that were outside the original L->R line
-    if (oldDistances[idx] <= 0) {
-        goesLeft[idx] = 0;
-        goesRight[idx] = 0;
-        newDistLeft[idx] = 0;
-        newDistRight[idx] = 0;
-        return;
-    }
+    // Get line endpoints from shared memory
+    float lx = sAnsX[localLabel];
+    float ly = sAnsY[localLabel];
+    float rx = sAnsX[localLabel + 1];
+    float ry = sAnsY[localLabel + 1];
 
     float curX = px[idx];
     float curY = py[idx];
 
-    // Distance from L->M line (positive = left of line)
-    float distLM = (mx - lx) * (curY - ly) - (my - ly) * (curX - lx);
-    
-    // Distance from M->R line (positive = left of line)
-    float distMR = (rx - mx) * (curY - my) - (ry - my) * (curX - mx);
-
-    // Point goes to left partition if it's outside L->M
-    // Point goes to right partition if it's outside M->R
-    goesLeft[idx] = (distLM > 0) ? 1 : 0;
-    goesRight[idx] = (distMR > 0) ? 1 : 0;
-    
-    // Store the new distances for use in next iteration
-    newDistLeft[idx] = distLM;
-    newDistRight[idx] = distMR;
-}
-
-// Compact points into new arrays based on prefix sums
-// Uses the new distances computed by classifyPointsForSplitKernel
-__global__ void compactPointsKernel(float *px, float *py,
-                                     float *newDistLeft, float *newDistRight,
-                                     int *goesLeft, int *goesRight,
-                                     int *leftScan, int *rightScan, int rightOffset,
-                                     float *pxNew, float *pyNew, float *distNew, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) return;
-
-    if (goesLeft[idx]) {
-        int newIdx = leftScan[idx];
-        pxNew[newIdx] = px[idx];
-        pyNew[newIdx] = py[idx];
-        distNew[newIdx] = newDistLeft[idx];  // Use new distance from L->M
-    } else if (goesRight[idx]) {
-        int newIdx = rightOffset + rightScan[idx];
-        pxNew[newIdx] = px[idx];
-        pyNew[newIdx] = py[idx];
-        distNew[newIdx] = newDistRight[idx];  // Use new distance from M->R
-    }
+    // Compute distance (cross product)
+    float d = (rx - lx) * (curY - ly) - (ry - ly) * (curX - lx);
+    distances[idx] = d;
 }
 
 // CUB exclusive scan wrapper
@@ -271,36 +194,148 @@ void cubExclusiveScanInt(int *d_input, int *d_output, int n) {
     cudaFree(d_temp_storage);
 }
 
-// CUB find min/max X coordinates
-void findMinMaxX(float *d_px, int n, float *minX, float *maxX) {
-    float *d_result;
-    cudaMalloc(&d_result, sizeof(float));
-    void *d_temp_storage = nullptr;
-    size_t temp_storage_bytes = 0;
-
-    // Min
-    cub::DeviceReduce::Min(d_temp_storage, temp_storage_bytes, d_px, d_result, n);
-    cudaMalloc(&d_temp_storage, temp_storage_bytes);
-    cub::DeviceReduce::Min(d_temp_storage, temp_storage_bytes, d_px, d_result, n);
-    cudaMemcpy(minX, d_result, sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFree(d_temp_storage);
-
-    // Max
-    d_temp_storage = nullptr;
-    temp_storage_bytes = 0;
-    cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_px, d_result, n);
-    cudaMalloc(&d_temp_storage, temp_storage_bytes);
-    cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_px, d_result, n);
-    cudaMemcpy(maxX, d_result, sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFree(d_temp_storage);
-
-    cudaFree(d_result);
+// Kernel to find max distance point per label (partition)
+// Each point has a label, and we find the max distance point for each label
+__global__ void findMaxDistPerLabelKernel(float *distances, int *labels, 
+                                           float *maxDistPerLabel, int *maxIdxPerLabel,
+                                           int numLabels, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    
+    int label = labels[idx];
+    float dist = distances[idx];
+    
+    if (dist > 0) {
+        // Atomic max - we need to compare and swap both distance and index
+        // Use atomicMax on a reinterpreted float as int for comparison
+        int *addr = maxIdxPerLabel + label;
+        float *distAddr = maxDistPerLabel + label;
+        
+        // Simple approach: use atomicMax on distance, then race to set index
+        // This may not give exactly the right index in case of ties, but that's OK
+        float oldDist = atomicMax((int*)distAddr, __float_as_int(dist));
+        if (__float_as_int(dist) >= __float_as_int(oldDist)) {
+            atomicExch(addr, idx);
+        }
+    }
 }
+
+// Kernel to update labels after finding max points
+// For each point, if its partition got a max point, update label based on which side
+// Points with label -1 will be eliminated in compaction
+__global__ void updateLabelsKernel(float *px, float *py, int *labels,
+                                    float *ansX, float *ansY, int *maxIdxPerLabel,
+                                    int *newLabels, int numLabels, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    
+    int label = labels[idx];
+    int maxIdx = maxIdxPerLabel[label];
+    
+    if (maxIdx < 0) {
+        // No max point found for this partition, point is eliminated
+        newLabels[idx] = -1;
+        return;
+    }
+    
+    // Get L, M, R points
+    float lx = ansX[label];
+    float ly = ansY[label];
+    float rx = ansX[label + 1];
+    float ry = ansY[label + 1];
+    float mx = px[maxIdx];
+    float my = py[maxIdx];
+    
+    // Skip the max point itself
+    if (idx == maxIdx) {
+        newLabels[idx] = -1;
+        return;
+    }
+    
+    float curX = px[idx];
+    float curY = py[idx];
+    
+    // Distance from L->M line
+    float distLM = (mx - lx) * (curY - ly) - (my - ly) * (curX - lx);
+    // Distance from M->R line  
+    float distMR = (rx - mx) * (curY - my) - (ry - my) * (curX - mx);
+    
+    // New label: 2*label for left partition (L->M), 2*label+1 for right partition (M->R)
+    if (distLM > 0) {
+        newLabels[idx] = 2 * label;
+    } else if (distMR > 0) {
+        newLabels[idx] = 2 * label + 1;
+    } else {
+        newLabels[idx] = -1;  // Point is inside the new triangle, eliminate
+    }
+}
+
+// Kernel to mark points going to left or right sub-partition
+// goesLeft[i] = 1 if point i goes to left sub-partition (label 2*oldLabel)
+// goesRight[i] = 1 if point i goes to right sub-partition (label 2*oldLabel+1)
+// eliminated[i] = 1 if point is eliminated (label -1)
+__global__ void classifyForCompactionKernel(int *newLabels, 
+                                             int *goesLeft, int *goesRight, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    
+    int label = newLabels[idx];
+    if (label < 0) {
+        goesLeft[idx] = 0;
+        goesRight[idx] = 0;
+    } else if (label % 2 == 0) {
+        goesLeft[idx] = 1;
+        goesRight[idx] = 0;
+    } else {
+        goesLeft[idx] = 0;
+        goesRight[idx] = 1;
+    }
+}
+
+// Kernel to compact and sort points by label using prefix scan results
+// Points are written in order: all left partition points first, then all right partition points
+// Within each group, they maintain their relative order (stable)
+__global__ void compactSortedByLabelKernel(float *pxIn, float *pyIn, int *labelsIn,
+                                            int *goesLeft, int *goesRight,
+                                            int *leftScan, int *rightScan,
+                                            int leftTotal,
+                                            float *pxOut, float *pyOut, int *labelsOut,
+                                            int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    
+    int label = labelsIn[idx];
+    if (label < 0) return;  // Eliminated point
+    
+    int outIdx;
+    if (goesLeft[idx]) {
+        outIdx = leftScan[idx];
+    } else {
+        outIdx = leftTotal + rightScan[idx];
+    }
+    
+    pxOut[outIdx] = pxIn[idx];
+    pyOut[outIdx] = pyIn[idx];
+    labelsOut[outIdx] = label;
+}
+
+// After compaction, we need to renumber labels to be contiguous (0, 1, 2, ...)
+// and sort points within each old label group so left comes before right
+// This kernel computes the final contiguous label
+__global__ void renumberLabelsKernel(int *labels, int *labelMapping, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    
+    int oldLabel = labels[idx];
+    labels[idx] = labelMapping[oldLabel];
+}
+
 
 // ============================================================================
 // QuickHull for one side: finds hull points between leftPt and rightPt
 // Points are assumed to be on the LEFT side of the directed edge leftPt->rightPt
 // Returns hull points in order from leftPt to rightPt (exclusive of endpoints)
+// Uses label-based approach to process all partitions at once
 // ============================================================================
 void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
                           float leftX, float leftY, float rightX, float rightY,
@@ -308,216 +343,255 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     if (n == 0) return;
 
     // Allocate device memory
-    float *d_px, *d_py, *d_pxNew, *d_pyNew;
-    float *d_distances, *d_distNew;
-    float *d_newDistLeft, *d_newDistRight;  // For storing recomputed distances after split
-    int *d_goesLeft, *d_goesRight, *d_leftScan, *d_rightScan;
+    float *d_px, *d_py;
+    float *d_distances;
+    int *d_labels;
+    float *d_ansX, *d_ansY;
 
     cudaMalloc(&d_px, n * sizeof(float));
     cudaMalloc(&d_py, n * sizeof(float));
-    cudaMalloc(&d_pxNew, n * sizeof(float));
-    cudaMalloc(&d_pyNew, n * sizeof(float));
     cudaMalloc(&d_distances, n * sizeof(float));
-    cudaMalloc(&d_distNew, n * sizeof(float));
-    cudaMalloc(&d_newDistLeft, n * sizeof(float));
-    cudaMalloc(&d_newDistRight, n * sizeof(float));
-    cudaMalloc(&d_goesLeft, n * sizeof(int));
-    cudaMalloc(&d_goesRight, n * sizeof(int));
-    cudaMalloc(&d_leftScan, n * sizeof(int));
-    cudaMalloc(&d_rightScan, n * sizeof(int));
+    cudaMalloc(&d_labels, n * sizeof(int));
 
     cudaMemcpy(d_px, h_px, n * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_py, h_py, n * sizeof(float), cudaMemcpyHostToDevice);
+    
+    // Initialize all labels to 0 (single partition)
+    cudaMemset(d_labels, 0, n * sizeof(int));
 
-    // ANS stores the hull points in order
+    // ANS stores the hull points in order (on host, copied to device as needed)
     std::vector<Point> ans;
     ans.push_back({leftX, leftY});
     ans.push_back({rightX, rightY});
-
-    // Partition info: each partition is defined by consecutive ANS points
-    // partition i goes from ans[i] to ans[i+1]
-    // We store: start index in point array, count of points
-    struct Partition {
-        int start;
-        int count;
-    };
-    std::vector<Partition> partitions;
-    partitions.push_back({0, n});
-
+    
     int currentN = n;
-    float *h_pxTemp = new float[n];
-    float *h_pyTemp = new float[n];
+    int numLabels = 1;  // Start with 1 partition (label 0)
+    
+    // Allocate ANS arrays on device (will grow as needed)
+    int maxAnsSize = n + 2;  // Upper bound on ANS size
+    cudaMalloc(&d_ansX, maxAnsSize * sizeof(float));
+    cudaMalloc(&d_ansY, maxAnsSize * sizeof(float));
 
     while (true) {
-        bool anyChanged = false;
-
-        // For each partition, find max point and split
-        std::vector<Point> newAns;
-        std::vector<Partition> newPartitions;
-        
-        // We'll process all partitions and rebuild arrays
-        std::vector<float> allNewPx, allNewPy;
-        
-        int partIdx = 0;
-        for (size_t p = 0; p < partitions.size(); p++) {
-            Partition &part = partitions[p];
-            Point &L = ans[p];
-            Point &R = ans[p + 1];
-
-            newAns.push_back(L);
-
-            if (part.count == 0) {
-                // Empty partition, no max point - partition stays empty
-                newPartitions.push_back({(int)allNewPx.size(), 0});
-                continue;
-            }
-
-            // Find max distance point using block-level reduction
-            int numBlocks = (part.count + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            
-            // Compute distances for this partition's points
-            computeDistancesSimpleKernel<<<numBlocks, BLOCK_SIZE>>>(
-                d_px + part.start, d_py + part.start,
-                L.x, L.y, R.x, R.y,
-                d_distances + part.start, part.count);
-            cudaDeviceSynchronize();
-
-            float *d_blockMaxDist;
-            int *d_blockMaxIdx;
-            cudaMalloc(&d_blockMaxDist, numBlocks * sizeof(float));
-            cudaMalloc(&d_blockMaxIdx, numBlocks * sizeof(int));
-
-            findMaxDistPointKernel<<<numBlocks, BLOCK_SIZE>>>(
-                d_distances + part.start, d_blockMaxDist, d_blockMaxIdx, part.count);
-            cudaDeviceSynchronize();
-
-            // Copy block results to host and find global max
-            float *h_blockMaxDist = new float[numBlocks];
-            int *h_blockMaxIdx = new int[numBlocks];
-            cudaMemcpy(h_blockMaxDist, d_blockMaxDist, numBlocks * sizeof(float), cudaMemcpyDeviceToHost);
-            cudaMemcpy(h_blockMaxIdx, d_blockMaxIdx, numBlocks * sizeof(int), cudaMemcpyDeviceToHost);
-            
-            int h_maxIdx;
-            float h_maxDist;
-            findMaxPointHost(h_blockMaxDist, h_blockMaxIdx, numBlocks, &h_maxIdx, &h_maxDist);
-            
-            delete[] h_blockMaxDist;
-            delete[] h_blockMaxIdx;
-            cudaFree(d_blockMaxDist);
-            cudaFree(d_blockMaxIdx);
-
-            if (h_maxIdx < 0 || h_maxDist <= 0) {
-                // No point outside the line, partition is done - keep it empty for next iteration
-                newPartitions.push_back({(int)allNewPx.size(), 0});
-                continue;
-            }
-
-            anyChanged = true;
-
-            // Get max point coordinates
-            float maxPx, maxPy;
-            cudaMemcpy(&maxPx, d_px + part.start + h_maxIdx, sizeof(float), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&maxPy, d_py + part.start + h_maxIdx, sizeof(float), cudaMemcpyDeviceToHost);
-
-            // Add max point to ANS (between L and R)
-            newAns.push_back({maxPx, maxPy});
-
-            // Classify points based on which new edge they're outside of:
-            // Left partition: points with positive distance from L->maxP
-            // Right partition: points with positive distance from maxP->R
-            // Exclude the max point itself (h_maxIdx) from being added to either partition
-            classifyPointsForSplitKernel<<<numBlocks, BLOCK_SIZE>>>(
-                d_px + part.start, d_py + part.start, d_distances + part.start,
-                L.x, L.y, maxPx, maxPy, R.x, R.y,
-                h_maxIdx,
-                d_goesLeft + part.start, d_goesRight + part.start,
-                d_newDistLeft + part.start, d_newDistRight + part.start, part.count);
-            cudaDeviceSynchronize();
-
-            // Prefix sums for compaction
-            cubExclusiveScanInt(d_goesLeft + part.start, d_leftScan + part.start, part.count);
-            cubExclusiveScanInt(d_goesRight + part.start, d_rightScan + part.start, part.count);
-
-            // Get counts
-            int leftCount, rightCount;
-            int lastLeft, lastRight;
-            cudaMemcpy(&leftCount, d_leftScan + part.start + part.count - 1, sizeof(int), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&lastLeft, d_goesLeft + part.start + part.count - 1, sizeof(int), cudaMemcpyDeviceToHost);
-            leftCount += lastLeft;
-            cudaMemcpy(&rightCount, d_rightScan + part.start + part.count - 1, sizeof(int), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&lastRight, d_goesRight + part.start + part.count - 1, sizeof(int), cudaMemcpyDeviceToHost);
-            rightCount += lastRight;
-
-            // Compact points
-            int newStart = allNewPx.size();
-            allNewPx.resize(newStart + leftCount + rightCount);
-            allNewPy.resize(newStart + leftCount + rightCount);
-
-            // Copy to device temp arrays (use new distances, not old ones)
-            compactPointsKernel<<<numBlocks, BLOCK_SIZE>>>(
-                d_px + part.start, d_py + part.start,
-                d_newDistLeft + part.start, d_newDistRight + part.start,
-                d_goesLeft + part.start, d_goesRight + part.start,
-                d_leftScan + part.start, d_rightScan + part.start, leftCount,
-                d_pxNew, d_pyNew, d_distNew, part.count);
-            cudaDeviceSynchronize();
-
-            // Copy compacted points back to host temp
-            cudaMemcpy(h_pxTemp, d_pxNew, (leftCount + rightCount) * sizeof(float), cudaMemcpyDeviceToHost);
-            cudaMemcpy(h_pyTemp, d_pyNew, (leftCount + rightCount) * sizeof(float), cudaMemcpyDeviceToHost);
-
-            for (int i = 0; i < leftCount + rightCount; i++) {
-                allNewPx[newStart + i] = h_pxTemp[i];
-                allNewPy[newStart + i] = h_pyTemp[i];
-            }
-
-            // Record new partitions
-            newPartitions.push_back({newStart, leftCount});  // L -> maxP
-            newPartitions.push_back({newStart + leftCount, rightCount});  // maxP -> R
+        // Copy current ANS to device
+        std::vector<float> ansX(ans.size()), ansY(ans.size());
+        for (size_t i = 0; i < ans.size(); i++) {
+            ansX[i] = ans[i].x;
+            ansY[i] = ans[i].y;
         }
+        cudaMemcpy(d_ansX, ansX.data(), ans.size() * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_ansY, ansY.data(), ans.size() * sizeof(float), cudaMemcpyHostToDevice);
 
-        // Add final ANS point
-        newAns.push_back(ans.back());
+        int numBlocks = (currentN + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        
+        // Compute distances for ALL points at once using labels
+        size_t sharedMemSize = 2 * (BLOCK_SIZE + 2) * sizeof(float);
+        computeDistancesKernel<<<numBlocks, BLOCK_SIZE, sharedMemSize>>>(
+            d_px, d_py, d_labels,
+            d_ansX, d_ansY, (int)ans.size(),
+            d_distances, currentN);
+        cudaDeviceSynchronize();
 
+        // Find max distance point for each partition
+        // Allocate and initialize per-label max arrays
+        float *d_maxDistPerLabel;
+        int *d_maxIdxPerLabel;
+        cudaMalloc(&d_maxDistPerLabel, numLabels * sizeof(float));
+        cudaMalloc(&d_maxIdxPerLabel, numLabels * sizeof(int));
+        
+        // Initialize to -FLT_MAX and -1
+        std::vector<float> initDist(numLabels, -FLT_MAX);
+        std::vector<int> initIdx(numLabels, -1);
+        cudaMemcpy(d_maxDistPerLabel, initDist.data(), numLabels * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_maxIdxPerLabel, initIdx.data(), numLabels * sizeof(int), cudaMemcpyHostToDevice);
+        
+        findMaxDistPerLabelKernel<<<numBlocks, BLOCK_SIZE>>>(
+            d_distances, d_labels, d_maxDistPerLabel, d_maxIdxPerLabel, numLabels, currentN);
+        cudaDeviceSynchronize();
+        
+        // Copy results back to host
+        std::vector<float> h_maxDist(numLabels);
+        std::vector<int> h_maxIdx(numLabels);
+        cudaMemcpy(h_maxDist.data(), d_maxDistPerLabel, numLabels * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_maxIdx.data(), d_maxIdxPerLabel, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
+        
+        // Check if any partition found a max point
+        bool anyChanged = false;
+        for (int i = 0; i < numLabels; i++) {
+            if (h_maxIdx[i] >= 0 && h_maxDist[i] > 0) {
+                anyChanged = true;
+                break;
+            }
+        }
+        
         if (!anyChanged) {
-            // No more splits, we're done
+            cudaFree(d_maxDistPerLabel);
+            cudaFree(d_maxIdxPerLabel);
             break;
         }
-
-        // Update for next iteration
-        ans = newAns;
-        partitions = newPartitions;
-
-        // Copy new points to device
-        currentN = allNewPx.size();
-        if (currentN > 0) {
-            cudaMemcpy(d_px, allNewPx.data(), currentN * sizeof(float), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_py, allNewPy.data(), currentN * sizeof(float), cudaMemcpyHostToDevice);
+        
+        // Build new ANS by inserting max points
+        std::vector<Point> newAns;
+        std::vector<int> labelMapping(numLabels);  // Maps old label to position in new ANS
+        
+        int newLabel = 0;
+        for (int i = 0; i < numLabels; i++) {
+            newAns.push_back(ans[i]);
+            labelMapping[i] = newLabel;
+            
+            if (h_maxIdx[i] >= 0 && h_maxDist[i] > 0) {
+                // Get max point coordinates
+                float maxPx, maxPy;
+                cudaMemcpy(&maxPx, d_px + h_maxIdx[i], sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&maxPy, d_py + h_maxIdx[i], sizeof(float), cudaMemcpyDeviceToHost);
+                newAns.push_back({maxPx, maxPy});
+                newLabel += 2;  // Two new partitions
+            } else {
+                newLabel += 1;  // Partition stays but gets renumbered
+            }
         }
+        newAns.push_back(ans.back());
+        
+        // Update labels on device
+        int *d_newLabels;
+        cudaMalloc(&d_newLabels, currentN * sizeof(int));
+        
+        updateLabelsKernel<<<numBlocks, BLOCK_SIZE>>>(
+            d_px, d_py, d_labels,
+            d_ansX, d_ansY, d_maxIdxPerLabel,
+            d_newLabels, numLabels, currentN);
+        cudaDeviceSynchronize();
+        
+        cudaFree(d_maxDistPerLabel);
+        cudaFree(d_maxIdxPerLabel);
+        
+        // =====================================================================
+        // Compact and sort points by label using prefix scans
+        // This maintains the invariant that points are sorted by label
+        // =====================================================================
+        
+        // Allocate arrays for compaction
+        int *d_goesLeft, *d_goesRight;
+        int *d_leftScan, *d_rightScan;
+        float *d_pxNew, *d_pyNew;
+        int *d_labelsNew;
+        
+        cudaMalloc(&d_goesLeft, currentN * sizeof(int));
+        cudaMalloc(&d_goesRight, currentN * sizeof(int));
+        cudaMalloc(&d_leftScan, currentN * sizeof(int));
+        cudaMalloc(&d_rightScan, currentN * sizeof(int));
+        cudaMalloc(&d_pxNew, currentN * sizeof(float));
+        cudaMalloc(&d_pyNew, currentN * sizeof(float));
+        cudaMalloc(&d_labelsNew, currentN * sizeof(int));
+        
+        // Classify points: left (even label), right (odd label), or eliminated (-1)
+        classifyForCompactionKernel<<<numBlocks, BLOCK_SIZE>>>(
+            d_newLabels, d_goesLeft, d_goesRight, currentN);
+        cudaDeviceSynchronize();
+        
+        // Prefix sums for compaction
+        cubExclusiveScanInt(d_goesLeft, d_leftScan, currentN);
+        cubExclusiveScanInt(d_goesRight, d_rightScan, currentN);
+        
+        // Get total counts
+        int leftTotal, rightTotal;
+        int lastLeft, lastRight;
+        cudaMemcpy(&leftTotal, d_leftScan + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&lastLeft, d_goesLeft + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        leftTotal += lastLeft;
+        cudaMemcpy(&rightTotal, d_rightScan + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&lastRight, d_goesRight + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        rightTotal += lastRight;
+        
+        int newN = leftTotal + rightTotal;
+        
+        if (newN == 0) {
+            cudaFree(d_newLabels);
+            cudaFree(d_goesLeft);
+            cudaFree(d_goesRight);
+            cudaFree(d_leftScan);
+            cudaFree(d_rightScan);
+            cudaFree(d_pxNew);
+            cudaFree(d_pyNew);
+            cudaFree(d_labelsNew);
+            ans = newAns;
+            break;
+        }
+        
+        // Compact points, putting left partition points first, then right
+        // This maintains sorted order by label since:
+        // - Points with even labels (left partitions) come first
+        // - Points with odd labels (right partitions) come after
+        // - Within each group, relative order is preserved (stable)
+        compactSortedByLabelKernel<<<numBlocks, BLOCK_SIZE>>>(
+            d_px, d_py, d_newLabels,
+            d_goesLeft, d_goesRight,
+            d_leftScan, d_rightScan, leftTotal,
+            d_pxNew, d_pyNew, d_labelsNew,
+            currentN);
+        cudaDeviceSynchronize();
+        
+        // Now we need to renumber labels to be contiguous (0, 1, 2, ...)
+        // Build label mapping: sparse label -> contiguous label
+        // For the new ANS, partition i corresponds to label i
+        // labelMapping maps the sparse label (2*oldLabel or 2*oldLabel+1) to new contiguous label
+        int maxSparseLabel = 2 * numLabels;  // Upper bound on sparse labels
+        std::vector<int> h_labelMapping(maxSparseLabel, -1);
+        int contiguousLabel = 0;
+        for (int i = 0; i < numLabels; i++) {
+            if (h_maxIdx[i] >= 0 && h_maxDist[i] > 0) {
+                // This partition split into two
+                h_labelMapping[2 * i] = contiguousLabel++;      // Left sub-partition
+                h_labelMapping[2 * i + 1] = contiguousLabel++;  // Right sub-partition
+            }
+            // If partition didn't split, no points remain in it
+        }
+        
+        // Copy label mapping to device and renumber
+        int *d_labelMapping;
+        cudaMalloc(&d_labelMapping, maxSparseLabel * sizeof(int));
+        cudaMemcpy(d_labelMapping, h_labelMapping.data(), maxSparseLabel * sizeof(int), cudaMemcpyHostToDevice);
+        
+        int newNumBlocks = (newN + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        renumberLabelsKernel<<<newNumBlocks, BLOCK_SIZE>>>(d_labelsNew, d_labelMapping, newN);
+        cudaDeviceSynchronize();
+        
+        cudaFree(d_labelMapping);
+        
+        // Swap buffers
+        cudaMemcpy(d_px, d_pxNew, newN * sizeof(float), cudaMemcpyDeviceToDevice);
+        cudaMemcpy(d_py, d_pyNew, newN * sizeof(float), cudaMemcpyDeviceToDevice);
+        cudaMemcpy(d_labels, d_labelsNew, newN * sizeof(int), cudaMemcpyDeviceToDevice);
+        
+        // Cleanup temp arrays
+        cudaFree(d_newLabels);
+        cudaFree(d_goesLeft);
+        cudaFree(d_goesRight);
+        cudaFree(d_leftScan);
+        cudaFree(d_rightScan);
+        cudaFree(d_pxNew);
+        cudaFree(d_pyNew);
+        cudaFree(d_labelsNew);
+        
+        currentN = newN;
+        ans = newAns;
+        numLabels = contiguousLabel;
     }
-
-    delete[] h_pxTemp;
-    delete[] h_pyTemp;
 
     // Cleanup
     cudaFree(d_px);
     cudaFree(d_py);
-    cudaFree(d_pxNew);
-    cudaFree(d_pyNew);
     cudaFree(d_distances);
-    cudaFree(d_distNew);
-    cudaFree(d_newDistLeft);
-    cudaFree(d_newDistRight);
-    cudaFree(d_goesLeft);
-    cudaFree(d_goesRight);
-    cudaFree(d_leftScan);
-    cudaFree(d_rightScan);
+    cudaFree(d_labels);
+    cudaFree(d_ansX);
+    cudaFree(d_ansY);
 
     // Return hull points (excluding endpoints which are added by caller)
     for (size_t i = 1; i < ans.size() - 1; i++) {
         hullPoints.push_back(ans[i]);
     }
 }
+
 
 // ============================================================================
 // Main entry point: runs QuickHull on upper and lower hulls separately
