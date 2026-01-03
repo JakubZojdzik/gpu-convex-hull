@@ -19,7 +19,7 @@ extern "C" void gpuQuickHull(
 
 int main()
 {
-    int N = 30;
+    int N = 700000;
 
     float *px = (float*) malloc(sizeof(float) * N);
     float *py = (float*) malloc(sizeof(float) * N);
@@ -27,10 +27,11 @@ int main()
     srand(time(NULL));
 
     int points = 0;
+    float radius = 50.0f;
     while (points < N) {
-        float x = 2.0f * (rand() / (float)RAND_MAX) - 1.0f;
-        float y = 2.0f * (rand() / (float)RAND_MAX) - 1.0f;
-        if (x*x + y*y <= 1.0f) {
+        float x = radius * 2.0f * (rand() / (float)RAND_MAX) - radius;
+        float y = radius * 2.0f * (rand() / (float)RAND_MAX) - radius;
+        if (x*x + y*y <= radius*radius) {
             px[points] = x;
             py[points] = y;
             points++;
