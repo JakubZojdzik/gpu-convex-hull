@@ -447,7 +447,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     int numLabels = 1;  // Start with 1 partition (label 0)
     
     // Allocate ANS arrays on device (will grow as needed)
-    int maxAnsSize = n + 2;  // Upper bound on ANS size
+    int maxAnsSize = n + 1;  // Upper bound on ANS size
     cudaMalloc(&d_ansX, maxAnsSize * sizeof(float));
     cudaMalloc(&d_ansY, maxAnsSize * sizeof(float));
 
@@ -469,6 +469,21 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_px, d_py, d_labels,
             d_ansX, d_ansY, (int)ans.size(),
             d_distances, currentN);
+
+
+        // print points for debugging
+        cudaMemcpy(h_px, d_px, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_py, d_py, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+            printf("Point[%d] = (%.3f, %.3f)\n", i, h_px[i], h_py[i]);
+        }
+
+        // print computed distances for debugging
+        std::vector<float> h_distances(currentN);
+        cudaMemcpy(h_distances.data(), d_distances, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+            printf("Distance[%d] = %f\n", i, h_distances[i]);
+        }
             
         cudaDeviceSynchronize();
 
@@ -486,6 +501,10 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         // Copy results back to host
         std::vector<DistIdxPair> h_maxPairs(numLabels);
         cudaMemcpy(h_maxPairs.data(), d_maxPerSegment, numLabels * sizeof(DistIdxPair), cudaMemcpyDeviceToHost);
+
+        for (int i = 0; i < numLabels; i++) {
+            printf("MaxDist[%d] = %f, MaxIdx[%d] = %d\n", i, h_maxPairs[i].dist, i, h_maxPairs[i].idx);
+        }
         
         // Extract max distances and indices
         std::vector<float> h_maxDist(numLabels);
@@ -493,6 +512,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         for (int i = 0; i < numLabels; i++) {
             h_maxDist[i] = h_maxPairs[i].dist;
             h_maxIdx[i] = h_maxPairs[i].idx;
+            printf("Extracted MaxDist[%d] = %f, MaxIdx[%d] = %d\n", i, h_maxDist[i], i, h_maxIdx[i]);
         }
         
         // Check if any partition found a max point
@@ -500,6 +520,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         for (int i = 0; i < numLabels; i++) {
             if (h_maxIdx[i] >= 0 && h_maxDist[i] > 0) {
                 anyChanged = true;
+                printf("Partition %d changed: MaxDist = %f, MaxIdx = %d\n", i, h_maxDist[i], h_maxIdx[i]);
                 break;
             }
         }
@@ -507,6 +528,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         if (!anyChanged) {
             cudaFree(d_segmentOffsets);
             cudaFree(d_maxPerSegment);
+            cudaFree(d_maxIdxPerLabel);
+            printf("No partitions changed, terminating.\n");
             break;
         }
         
@@ -522,6 +545,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         int newLabel = 0;
         for (int i = 0; i < numLabels; i++) {
             newAns.push_back(ans[i]);
+            printf("Adding ANS point (%.3f, %.3f) from old label %d\n", ans[i].x, ans[i].y, i);
             labelMapping[i] = newLabel;
             
             if (h_maxIdx[i] >= 0 && h_maxDist[i] > 0) {
@@ -530,6 +554,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
                 cudaMemcpy(&maxPx, d_px + h_maxIdx[i], sizeof(float), cudaMemcpyDeviceToHost);
                 cudaMemcpy(&maxPy, d_py + h_maxIdx[i], sizeof(float), cudaMemcpyDeviceToHost);
                 newAns.push_back({maxPx, maxPy});
+                printf("Inserting max point (index = %d) (%.3f, %.3f) for partition %d\n", h_maxIdx[i], maxPx, maxPy, i);
                 newLabel += 2;  // Two new partitions
             } else {
                 newLabel += 1;  // Partition stays but gets renumbered
@@ -555,6 +580,15 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         // Compact and sort points by label using prefix scans
         // This maintains the invariant that points are sorted by label
         // =====================================================================
+
+        // points before sorting:
+        cudaMemcpy(h_px, d_px, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_py, d_py, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        std::vector<int> h_newLabels(currentN);
+        cudaMemcpy(h_newLabels.data(), d_newLabels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+            printf("Before compaction: Point[%d] = (%.3f, %.3f), NewLabel = %d\n", i, h_px[i], h_py[i], h_newLabels[i]);
+        }
         
         // Allocate arrays for compaction
         int *d_goesLeft, *d_goesRight;
@@ -637,6 +671,14 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         int *d_labelMapping;
         cudaMalloc(&d_labelMapping, maxSparseLabel * sizeof(int));
         cudaMemcpy(d_labelMapping, h_labelMapping.data(), maxSparseLabel * sizeof(int), cudaMemcpyHostToDevice);
+
+        // points after compaction:
+        cudaMemcpy(h_px, d_pxNew, newN * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_py, d_pyNew, newN * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_newLabels.data(), d_labelsNew, newN * sizeof(int), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < newN; i++) {
+            printf("After compaction: Point[%d] = (%.3f, %.3f), NewLabel = %d\n", i, h_px[i], h_py[i], h_newLabels[i]);
+        }
         
         int newNumBlocks = (newN + BLOCK_SIZE - 1) / BLOCK_SIZE;
         renumberLabelsKernel<<<newNumBlocks, BLOCK_SIZE>>>(d_labelsNew, d_labelMapping, newN);
@@ -662,6 +704,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         currentN = newN;
         ans = newAns;
         numLabels = contiguousLabel;
+
+        printf("Iteration complete: currentN = %d, numLabels = %d, ans size = %zu\n", currentN, numLabels, ans.size());
     }
 
     // Cleanup
@@ -710,6 +754,9 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     Point minPt = {h_min.x, h_min.y};
     Point maxPt = {h_max.x, h_max.y};
 
+    printf("Min Point: (%.3f, %.3f), Max Point: (%.3f, %.3f)\n",
+           minPt.x, minPt.y, maxPt.x, maxPt.y);
+
     // Partition points into upper (above MIN->MAX line) and lower (below)
     std::vector<float> upperX, upperY, lowerX, lowerY;
     upperX.reserve(n);
@@ -733,6 +780,16 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         // d == 0: point is on the line, skip (collinear with endpoints)
     }
 
+    printf("Upper hull points: \n");
+    for (size_t i = 0; i < upperX.size(); i++) {
+        printf("(%.3f, %.3f)\n", upperX[i], upperY[i]);
+    }
+    printf("Lower hull points: \n");
+    for (size_t i = 0; i < lowerX.size(); i++) {
+        printf("(%.3f, %.3f)\n", lowerX[i], lowerY[i]);
+    }
+    printf("\n");
+
     // Find upper hull (points above MIN->MAX, going from MIN to MAX)
     std::vector<Point> upperHull;
     if (!upperX.empty()) {
@@ -740,12 +797,24 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
                             minPt.x, minPt.y, maxPt.x, maxPt.y, upperHull);
     }
 
+    printf("Upper hull points after QuickHull:\n");
+    for (const auto &p : upperHull) {
+        printf("(%.3f, %.3f)\n", p.x, p.y);
+    }
+    printf("\n");
+
     // Find lower hull (points below MIN->MAX, going from MAX to MIN)
     std::vector<Point> lowerHull;
     if (!lowerX.empty()) {
         gpuQuickHullOneSide(lowerX.data(), lowerY.data(), lowerX.size(),
                             maxPt.x, maxPt.y, minPt.x, minPt.y, lowerHull);
     }
+
+    printf("Lower hull points after QuickHull:\n");
+    for (const auto &p : lowerHull) {
+        printf("(%.3f, %.3f)\n", p.x, p.y);
+    }
+    printf("\n");
 
     // Combine: MIN -> upper hull -> MAX -> lower hull -> back to MIN
     std::vector<Point> hull;
