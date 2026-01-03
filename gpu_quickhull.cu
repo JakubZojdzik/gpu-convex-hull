@@ -7,6 +7,7 @@
 #include <cub/device/device_scan.cuh>
 #include <cub/device/device_reduce.cuh>
 #include <cub/device/device_segmented_reduce.cuh>
+#include <cub/device/device_radix_sort.cuh>
 #include "utils.h"
 
 #define BLOCK_SIZE 512
@@ -638,6 +639,82 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         
         cudaFree(d_survives);
         cudaFree(d_scanResult);
+        
+        // ====================================================================
+        // CRITICAL: Sort points by label to maintain label-sorted invariant!
+        // Without this, segmented reduce produces garbage results.
+        // ====================================================================
+        
+        // We need to sort (pxNew, pyNew) by labelsNew as the key
+        // CUB doesn't directly support sorting 3 arrays together, so we use
+        // a two-step approach: sort indices by label, then gather
+        
+        // Allocate temp arrays for sorted output
+        float *d_pxSorted, *d_pySorted;
+        int *d_labelsSorted;
+        cudaMalloc(&d_pxSorted, newN * sizeof(float));
+        cudaMalloc(&d_pySorted, newN * sizeof(float));
+        cudaMalloc(&d_labelsSorted, newN * sizeof(int));
+        
+        // Create indices array
+        int *d_indices, *d_indicesSorted;
+        cudaMalloc(&d_indices, newN * sizeof(int));
+        cudaMalloc(&d_indicesSorted, newN * sizeof(int));
+        
+        // Initialize indices to 0, 1, 2, ...
+        int sortBlocks = (newN + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        // Use a simple kernel to initialize indices
+        {
+            std::vector<int> h_indices(newN);
+            for (int i = 0; i < newN; i++) h_indices[i] = i;
+            cudaMemcpy(d_indices, h_indices.data(), newN * sizeof(int), cudaMemcpyHostToDevice);
+        }
+        
+        // Determine temporary storage for sorting
+        void *d_temp_sort = nullptr;
+        size_t temp_sort_bytes = 0;
+        cub::DeviceRadixSort::SortPairs(d_temp_sort, temp_sort_bytes,
+            d_labelsNew, d_labelsSorted, d_indices, d_indicesSorted, newN);
+        cudaMalloc(&d_temp_sort, temp_sort_bytes);
+        
+        // Sort pairs: (labels -> sorted_labels, indices -> sorted_indices)
+        cub::DeviceRadixSort::SortPairs(d_temp_sort, temp_sort_bytes,
+            d_labelsNew, d_labelsSorted, d_indices, d_indicesSorted, newN);
+        cudaDeviceSynchronize();
+        
+        cudaFree(d_temp_sort);
+        cudaFree(d_indices);
+        
+        // Now gather px, py using sorted indices - do on CPU for simplicity
+        {
+            std::vector<float> h_pxNew(newN), h_pyNew(newN);
+            std::vector<int> h_sortedIndices(newN);
+            cudaMemcpy(h_pxNew.data(), d_pxNew, newN * sizeof(float), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_pyNew.data(), d_pyNew, newN * sizeof(float), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_sortedIndices.data(), d_indicesSorted, newN * sizeof(int), cudaMemcpyDeviceToHost);
+            
+            std::vector<float> h_pxSorted(newN), h_pySorted(newN);
+            for (int i = 0; i < newN; i++) {
+                h_pxSorted[i] = h_pxNew[h_sortedIndices[i]];
+                h_pySorted[i] = h_pyNew[h_sortedIndices[i]];
+            }
+            
+            cudaMemcpy(d_pxSorted, h_pxSorted.data(), newN * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_pySorted, h_pySorted.data(), newN * sizeof(float), cudaMemcpyHostToDevice);
+        }
+        
+        cudaFree(d_indicesSorted);
+        
+        // Copy sorted data back to New arrays (or just use sorted arrays directly)
+        cudaMemcpy(d_pxNew, d_pxSorted, newN * sizeof(float), cudaMemcpyDeviceToDevice);
+        cudaMemcpy(d_pyNew, d_pySorted, newN * sizeof(float), cudaMemcpyDeviceToDevice);
+        cudaMemcpy(d_labelsNew, d_labelsSorted, newN * sizeof(int), cudaMemcpyDeviceToDevice);
+        
+        cudaFree(d_pxSorted);
+        cudaFree(d_pySorted);
+        cudaFree(d_labelsSorted);
+        
+        printf("Sorted points by label.\n");
         
         // Copy compacted labels to host to build proper label mapping
         std::vector<int> h_compactedLabels(newN);
