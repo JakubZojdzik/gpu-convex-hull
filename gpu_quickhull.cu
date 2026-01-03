@@ -528,7 +528,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         if (!anyChanged) {
             cudaFree(d_segmentOffsets);
             cudaFree(d_maxPerSegment);
-            cudaFree(d_maxIdxPerLabel);
             printf("No partitions changed, terminating.\n");
             break;
         }
