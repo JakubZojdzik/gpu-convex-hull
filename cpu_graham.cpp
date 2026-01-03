@@ -14,6 +14,10 @@ static float dist(const Point &p, const Point &q) {
     return (p.x - q.x)*(p.x - q.x) + (p.y - q.y)*(p.y - q.y);
 }
 
+bool less_than(const Point &p1, const Point &p2) {
+    return p1.x < p2.x || (p1.x == p2.x && p1.y < p2.y);
+}
+
 void grahamScan(float *p_x, float *p_y, int N, float *result_x, float *result_y, int *M) {
     if (N <= 3) {
         for (int i = 0; i < N; i++) {
@@ -34,10 +38,6 @@ void grahamScan(float *p_x, float *p_y, int N, float *result_x, float *result_y,
 
     swap(points[0], points[ymin]);
     Point p0 = points[0];
-
-    auto less_than = [p0](const Point &p1, const Point &p2) {
-        return p0.x < p1.x || p0.x == p1.x && p0.y < p1.y;
-    };
 
     sort(points.begin()+1, points.end(), less_than);
 
