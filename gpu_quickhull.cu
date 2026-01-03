@@ -85,11 +85,20 @@ void findMaxPointHost(float *h_blockMaxDist, int *h_blockMaxIdx, int numBlocks,
 // Mark points that should go to left partition (positive distance from L->M)
 // or right partition (positive distance from M->R)
 // We need to recompute distances to the two new edges
+// maxIdx is the index of the max point which should be EXCLUDED from both partitions
 __global__ void classifyPointsForSplitKernel(float *px, float *py, float *oldDistances,
                                               float lx, float ly, float mx, float my, float rx, float ry,
+                                              int maxIdx,
                                               int *goesLeft, int *goesRight, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
+
+    // Exclude the max point itself - it becomes a hull vertex, not a candidate
+    if (idx == maxIdx) {
+        goesLeft[idx] = 0;
+        goesRight[idx] = 0;
+        return;
+    }
 
     // Only consider points that were outside the original L->R line
     if (oldDistances[idx] <= 0) {
@@ -221,18 +230,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     while (true) {
         bool anyChanged = false;
 
-        // Debug: print current ans
-        printf("DEBUG: Current ans (%zu points): ", ans.size());
-        for (size_t i = 0; i < ans.size(); i++) {
-            printf("(%.3f,%.3f) ", ans[i].x, ans[i].y);
-        }
-        printf("\n");
-        printf("DEBUG: Current partitions (%zu): ", partitions.size());
-        for (size_t i = 0; i < partitions.size(); i++) {
-            printf("[start=%d,count=%d] ", partitions[i].start, partitions[i].count);
-        }
-        printf("\n");
-
         // For each partition, find max point and split
         std::vector<Point> newAns;
         std::vector<Partition> newPartitions;
@@ -301,18 +298,17 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             cudaMemcpy(&maxPx, d_px + part.start + h_maxIdx, sizeof(float), cudaMemcpyDeviceToHost);
             cudaMemcpy(&maxPy, d_py + part.start + h_maxIdx, sizeof(float), cudaMemcpyDeviceToHost);
 
-            printf("DEBUG: Partition %zu: found max point (%.3f,%.3f) at local idx %d, dist=%.3f\n", 
-                   p, maxPx, maxPy, h_maxIdx, h_maxDist);
-
             // Add max point to ANS (between L and R)
             newAns.push_back({maxPx, maxPy});
 
             // Classify points based on which new edge they're outside of:
             // Left partition: points with positive distance from L->maxP
             // Right partition: points with positive distance from maxP->R
+            // Exclude the max point itself (h_maxIdx) from being added to either partition
             classifyPointsForSplitKernel<<<numBlocks, BLOCK_SIZE>>>(
                 d_px + part.start, d_py + part.start, d_distances + part.start,
                 L.x, L.y, maxPx, maxPy, R.x, R.y,
+                h_maxIdx,
                 d_goesLeft + part.start, d_goesRight + part.start, part.count);
             cudaDeviceSynchronize();
 
