@@ -6,7 +6,7 @@
 #include <cuda_runtime.h>
 
 // CPU
-extern void monotonChain(
+extern void monotoneChain(
     float *p_x, float *p_y, int N,
     float *result_x, float *result_y, int *M
 );
@@ -51,7 +51,7 @@ int main()
 
     /* ================= CPU ================= */
     auto cpu_start = std::chrono::high_resolution_clock::now();
-    monotonChain(px, py, N, result_x, result_y, &M_cpu);
+    monotoneChain(px, py, N, result_x, result_y, &M_cpu);
     auto cpu_end = std::chrono::high_resolution_clock::now();
     double cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
 
