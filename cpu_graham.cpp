@@ -36,10 +36,7 @@ void grahamScan(float *p_x, float *p_y, int N, float *result_x, float *result_y,
     Point p0 = points[0];
 
     auto less_than = [p0](const Point &p1, const Point &p2) {
-        int o = orientation(p0, p1, p2);
-        if (o == 0) return dist(p0, p1) < dist(p0, p2);
-        // place points with smaller polar angle first (counter-clockwise ordering)
-        return o == 1;
+        return p0.x < p1.x || p0.x == p1.x && p0.y < p1.y;
     };
 
     sort(points.begin()+1, points.end(), less_than);

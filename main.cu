@@ -11,6 +11,11 @@ extern void monotoneChain(
     float *result_x, float *result_y, int *M
 );
 
+extern void grahamScan(
+    float *p_x, float *p_y, int N,
+    float *result_x, float *result_y, int *M
+);
+
 // GPU
 extern "C" void gpuQuickHull(
     float *p_x, float *p_y, int N,
@@ -38,7 +43,7 @@ int main()
         }
     }
 
-    // printf("Input Points:\n[");
+    printf("Input Points:\n");
     // for (int i = 0; i < N; i++) {
     //     printf("(%.3f, %.3f)", px[i], py[i]);
     //     if (i < N - 1) printf(", ");
@@ -55,12 +60,26 @@ int main()
     auto cpu_end = std::chrono::high_resolution_clock::now();
     double cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
 
-    printf("CPU Monotone chain:\n[");
-    for (int i = 0; i < M_cpu; i++) {
-        printf("(%.3f, %.3f)", result_x[i], result_y[i]);
-        if (i < M_cpu - 1) printf(", ");
-    }
-    printf("]\n");
+    printf("CPU Monotone chain:\n");
+    // for (int i = 0; i < M_cpu; i++) {
+    //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
+    //     if (i < M_cpu - 1) printf(", ");
+    // }
+    // printf("]\n");
+    printf("Hull size: %d\n", M_cpu);
+    printf("Time: %.3f ms\n\n", cpu_ms);
+
+    auto cpu_start = std::chrono::high_resolution_clock::now();
+    grahamScan(px, py, N, result_x, result_y, &M_cpu);
+    auto cpu_end = std::chrono::high_resolution_clock::now();
+    double cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
+
+    printf("CPU Graham scan:\n[");
+    // for (int i = 0; i < M_cpu; i++) {
+    //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
+    //     if (i < M_cpu - 1) printf(", ");
+    // }
+    // printf("]\n");
     printf("Hull size: %d\n", M_cpu);
     printf("Time: %.3f ms\n\n", cpu_ms);
 
@@ -74,12 +93,12 @@ int main()
     auto gpu_end = std::chrono::high_resolution_clock::now();
     double gpu_ms = std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
 
-    printf("GPU QuickHull:\n[");
-    for (int i = 0; i < M_gpu; i++) {
-        printf("(%.3f, %.3f)", result_x[i], result_y[i]);
-        if (i < M_gpu - 1) printf(", ");
-    }
-    printf("]\n");
+    printf("GPU QuickHull:\n");
+    // for (int i = 0; i < M_gpu; i++) {
+    //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
+    //     if (i < M_gpu - 1) printf(", ");
+    // }
+    // printf("]\n");
     printf("Hull size: %d\n", M_gpu);
     printf("Time: %.3f ms\n", gpu_ms);
 
