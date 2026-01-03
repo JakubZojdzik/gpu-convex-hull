@@ -158,34 +158,69 @@ __global__ void findMaxPointFromReduceKernel(float *px, float *py, int *labels,
     }
 }
 
-// Output: d_output is sized for num_partitions (not n), stores max distance per partition
-void cubSegmentedMaxReduce(float *d_input, unsigned int *d_flags, float *d_output, int n, int num_partitions) {
+// Output: d_output is sized for num_partitions, stores max distance per partition at correct label index
+void cubSegmentedMaxReduce(float *d_input, unsigned int *d_flags, int *d_labels, float *d_output, int n, int num_partitions) {
     // d_flags: 1 at segment start, 0 elsewhere
-    // Convert flags to segment offsets
+    // Convert flags to segment offsets and track which label each segment belongs to
     int num_segments = 0;
     std::vector<int> h_offsets;
+    std::vector<int> h_segment_labels;  // Which partition label each segment has
     h_offsets.reserve(n+1);
+    h_segment_labels.reserve(n);
     cudaDeviceSynchronize();
     unsigned int* h_flags = new unsigned int[n];
+    int* h_labels = new int[n];
     cudaMemcpy(h_flags, d_flags, n * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_labels, d_labels, n * sizeof(int), cudaMemcpyDeviceToHost);
     for (int i = 0; i < n; ++i) {
         if (h_flags[i] == 1) {
             h_offsets.push_back(i);
+            h_segment_labels.push_back(h_labels[i]);  // Record the label for this segment
             num_segments++;
         }
     }
     h_offsets.push_back(n);
+    
+    if (num_segments == 0) {
+        delete[] h_flags;
+        delete[] h_labels;
+        return;
+    }
+    
     int* d_offsets;
     cudaMalloc(&d_offsets, (num_segments+1) * sizeof(int));
     cudaMemcpy(d_offsets, h_offsets.data(), (num_segments+1) * sizeof(int), cudaMemcpyHostToDevice);
+    
+    // Temporary output for CUB (one value per segment)
+    float* d_temp_output;
+    cudaMalloc(&d_temp_output, num_segments * sizeof(float));
+    
     void *d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
-    cub::DeviceSegmentedReduce::Max(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
+    cub::DeviceSegmentedReduce::Max(d_temp_storage, temp_storage_bytes, d_input, d_temp_output, num_segments, d_offsets, d_offsets+1);
     cudaMalloc(&d_temp_storage, temp_storage_bytes);
-    cub::DeviceSegmentedReduce::Max(d_temp_storage, temp_storage_bytes, d_input, d_output, num_segments, d_offsets, d_offsets+1);
+    cub::DeviceSegmentedReduce::Max(d_temp_storage, temp_storage_bytes, d_input, d_temp_output, num_segments, d_offsets, d_offsets+1);
+    
+    // Copy results from temp output to correct partition indices
+    float* h_temp_output = new float[num_segments];
+    cudaMemcpy(h_temp_output, d_temp_output, num_segments * sizeof(float), cudaMemcpyDeviceToHost);
+    
+    // Create host output array and scatter results to correct label positions
+    float* h_output = new float[num_partitions];
+    cudaMemcpy(h_output, d_output, num_partitions * sizeof(float), cudaMemcpyDeviceToHost);  // Keep existing init values
+    for (int i = 0; i < num_segments; ++i) {
+        int label = h_segment_labels[i];
+        h_output[label] = h_temp_output[i];
+    }
+    cudaMemcpy(d_output, h_output, num_partitions * sizeof(float), cudaMemcpyHostToDevice);
+    
     cudaFree(d_temp_storage);
     cudaFree(d_offsets);
+    cudaFree(d_temp_output);
     delete[] h_flags;
+    delete[] h_labels;
+    delete[] h_temp_output;
+    delete[] h_output;
 }
 
 // Steps 36-47
@@ -522,6 +557,10 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         std::vector<int> initMaxIdx(numPartitions, INT_MAX);
         cudaMemcpy(d_maxIdx, initMaxIdx.data(), numPartitions * sizeof(int), cudaMemcpyHostToDevice);
 
+        // Initialize maxDistPerPartition to -FLT_MAX so empty partitions don't trigger state=1
+        std::vector<float> initMaxDist(numPartitions, -FLT_MAX);
+        cudaMemcpy(d_maxDistPerPartition, initMaxDist.data(), numPartitions * sizeof(float), cudaMemcpyHostToDevice);
+
         // Steps 22-30
         // Find max distance point per partition using segmented reduce
         // Create segment flags (1 at start of each partition)
@@ -529,8 +568,8 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
             d_labels, d_segmentFlags, currentN);
         cudaDeviceSynchronize();
 
-        // Perform segmented max reduce (outputs one max per partition)
-        cubSegmentedMaxReduce(d_distances, d_segmentFlags, d_maxDistPerPartition, currentN, numPartitions);
+        // Perform segmented max reduce (outputs one max per partition at correct label index)
+        cubSegmentedMaxReduce(d_distances, d_segmentFlags, d_labels, d_maxDistPerPartition, currentN, numPartitions);
 
         // Debug: Check max distance per partition
         float *h_maxDistPerPartition = new float[numPartitions];

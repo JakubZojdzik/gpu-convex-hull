@@ -48,15 +48,16 @@ int main()
     double cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
 
     printf("CPU Graham Scan\n");
+    for (int i = 0; i < M_cpu; i++) {
+        printf("Hull point %d: (%.3f, %.3f)\n", i, result_x[i], result_y[i]);
+    }
     printf("Hull size: %d\n", M_cpu);
     printf("Time: %.3f ms\n\n", cpu_ms);
 
     /* ================= GPU ================= */
-    // Warm-up run
-    gpuQuickHull(px, py, N, result_x, result_y, &M_gpu);
-    cudaDeviceSynchronize();
-    
     // Timed run
+    memset(result_x, 0, sizeof(float) * N);
+    memset(result_y, 0, sizeof(float) * N);
     auto gpu_start = std::chrono::high_resolution_clock::now();
     gpuQuickHull(px, py, N, result_x, result_y, &M_gpu);
     cudaDeviceSynchronize();
@@ -64,6 +65,9 @@ int main()
     double gpu_ms = std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
 
     printf("GPU QuickHull\n");
+    for (int i = 0; i < M_gpu; i++) {
+        printf("Hull point %d: (%.3f, %.3f)\n", i, result_x[i], result_y[i]);
+    }
     printf("Hull size: %d\n", M_gpu);
     printf("Time: %.3f ms\n", gpu_ms);
 
