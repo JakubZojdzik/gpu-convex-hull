@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cub/device/device_scan.cuh>
 #include <cub/device/device_reduce.cuh>
+#include <cub/device/device_segmented_reduce.cuh>
 #include "utils.h"
 
 #define BLOCK_SIZE 512
@@ -42,6 +43,54 @@ struct MaxXOp {
         return (a.y > b.y) ? a : b;
     }
 };
+
+// ============================================================================
+// Structs and operators for segmented max distance reduction (per paper methodology)
+// ============================================================================
+
+// Pair of distance and original point index
+struct DistIdxPair {
+    float dist;
+    int   idx;
+};
+
+// Reduction operator: returns pair with larger distance
+struct MaxDistOp {
+    __host__ __device__
+    DistIdxPair operator()(const DistIdxPair &a, const DistIdxPair &b) const {
+        return (a.dist >= b.dist) ? a : b;
+    }
+};
+
+// Kernel to build DistIdxPair array from distances
+__global__ void buildDistIdxArray(const float *distances, DistIdxPair *pairs, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        pairs[i].dist = distances[i];
+        pairs[i].idx = i;
+    }
+}
+
+// Kernel to find segment offsets from sorted labels
+// For each segment i, offsets[i] = first index where label == i
+// offsets[numSegments] = n (sentinel)
+__global__ void findSegmentOffsetsKernel(const int *labels, int *offsets, int numSegments, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    // First thread sets first segment start
+    if (i == 0) {
+        offsets[0] = 0;
+        offsets[numSegments] = n;  // Sentinel
+    }
+    
+    // Each thread checks if there's a segment boundary at position i+1
+    if (i < n - 1) {
+        if (labels[i] != labels[i + 1]) {
+            // Boundary between segment labels[i] and labels[i+1]
+            offsets[labels[i + 1]] = i + 1;
+        }
+    }
+}
 
 
 __global__ void buildPointArray(const float *px,
@@ -119,6 +168,62 @@ void findMinMaxX_CUB(const float *d_px,
     cudaFree(d_max);
 }
 
+// ============================================================================
+// Segmented max distance reduction using CUB
+// Finds the max distance point for each partition (segment)
+// Points must be SORTED BY LABEL for this to work correctly
+// ============================================================================
+void segmentedMaxDistReduce(
+    const float *d_distances,
+    const int *d_labels,
+    int *d_segmentOffsets,  // Output: segment offsets [numSegments + 1]
+    DistIdxPair *d_maxPerSegment,  // Output: max dist-idx pair per segment
+    int n,
+    int numSegments)
+{
+    int numBlocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    
+    // Build segment offsets from sorted labels
+    findSegmentOffsetsKernel<<<numBlocks, BLOCK_SIZE>>>(
+        d_labels, d_segmentOffsets, numSegments, n);
+    cudaDeviceSynchronize();
+    
+    // Build DistIdxPair array
+    DistIdxPair *d_pairs;
+    cudaMalloc(&d_pairs, n * sizeof(DistIdxPair));
+    buildDistIdxArray<<<numBlocks, BLOCK_SIZE>>>(d_distances, d_pairs, n);
+    cudaDeviceSynchronize();
+    
+    // Use CUB segmented reduce to find max per segment
+    void *d_temp = nullptr;
+    size_t temp_bytes = 0;
+    
+    DistIdxPair identity{-FLT_MAX, -1};
+    
+    // Query temp storage size
+    cub::DeviceSegmentedReduce::Reduce(
+        d_temp, temp_bytes,
+        d_pairs, d_maxPerSegment,
+        numSegments,
+        d_segmentOffsets, d_segmentOffsets + 1,
+        MaxDistOp(), identity);
+    
+    cudaMalloc(&d_temp, temp_bytes);
+    
+    // Run segmented reduce
+    cub::DeviceSegmentedReduce::Reduce(
+        d_temp, temp_bytes,
+        d_pairs, d_maxPerSegment,
+        numSegments,
+        d_segmentOffsets, d_segmentOffsets + 1,
+        MaxDistOp(), identity);
+    
+    cudaDeviceSynchronize();
+    
+    cudaFree(d_temp);
+    cudaFree(d_pairs);
+}
+
 
 // Compute distances for all points at once using labels
 // Each point has a label indicating which partition it belongs to
@@ -194,30 +299,135 @@ void cubExclusiveScanInt(int *d_input, int *d_output, int n) {
     cudaFree(d_temp_storage);
 }
 
-// Kernel to find max distance point per label (partition)
-// Each point has a label, and we find the max distance point for each label
-__global__ void findMaxDistPerLabelKernel(float *distances, int *labels, 
-                                           float *maxDistPerLabel, int *maxIdxPerLabel,
-                                           int numLabels, int n) {
+// Structure for segmented max reduction - stores distance and original index
+struct DistIdx {
+    float dist;
+    int idx;
+};
+
+// Reduction operator for finding max distance with index
+struct MaxDistOp {
+    __host__ __device__
+    DistIdx operator()(const DistIdx &a, const DistIdx &b) const {
+        // Only consider positive distances
+        if (a.dist <= 0 && b.dist <= 0) return DistIdx{-FLT_MAX, -1};
+        if (a.dist <= 0) return b;
+        if (b.dist <= 0) return a;
+        return (a.dist >= b.dist) ? a : b;
+    }
+};
+
+// Kernel to build DistIdx array from distances
+__global__ void buildDistIdxKernel(float *distances, DistIdx *distIdx, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    distIdx[idx].dist = distances[idx];
+    distIdx[idx].idx = idx;
+}
+
+// Kernel to detect segment heads (where label changes)
+// Since points are sorted by label, segment head is where labels[i] != labels[i-1]
+__global__ void detectSegmentHeadsKernel(int *labels, int *segmentHeads, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
     
-    int label = labels[idx];
-    float dist = distances[idx];
+    if (idx == 0) {
+        segmentHeads[0] = 1;  // First element is always a head
+    } else {
+        segmentHeads[idx] = (labels[idx] != labels[idx - 1]) ? 1 : 0;
+    }
+}
+
+// Use CUB DeviceSegmentedReduce to find max per segment
+void findMaxPerSegment(DistIdx *d_distIdx, int *d_labels, int n, int numLabels,
+                       float *h_maxDist, int *h_maxIdx) {
+    // First, we need to find segment boundaries
+    // Since points are sorted by label, we can compute offsets
     
-    if (dist > 0) {
-        // Atomic max - we need to compare and swap both distance and index
-        // Use atomicMax on a reinterpreted float as int for comparison
-        int *addr = maxIdxPerLabel + label;
-        float *distAddr = maxDistPerLabel + label;
-        
-        // Simple approach: use atomicMax on distance, then race to set index
-        // This may not give exactly the right index in case of ties, but that's OK
-        float oldDist = atomicMax((int*)distAddr, __float_as_int(dist));
-        if (__float_as_int(dist) >= __float_as_int(oldDist)) {
-            atomicExch(addr, idx);
+    // Count points per label by scanning
+    int *d_segmentHeads;
+    cudaMalloc(&d_segmentHeads, n * sizeof(int));
+    
+    int numBlocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    detectSegmentHeadsKernel<<<numBlocks, BLOCK_SIZE>>>(d_labels, d_segmentHeads, n);
+    cudaDeviceSynchronize();
+    
+    // Compute segment offsets using exclusive scan
+    int *d_segmentOffsets;
+    cudaMalloc(&d_segmentOffsets, (n + 1) * sizeof(int));
+    
+    // Copy segment heads and do inclusive scan to get segment IDs
+    int *d_segmentIds;
+    cudaMalloc(&d_segmentIds, n * sizeof(int));
+    
+    void *d_temp = nullptr;
+    size_t temp_bytes = 0;
+    cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_segmentHeads, d_segmentIds, n);
+    cudaMalloc(&d_temp, temp_bytes);
+    cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_segmentHeads, d_segmentIds, n);
+    cudaFree(d_temp);
+    
+    // Now we need to find where each segment starts
+    // Copy labels to host to build offset array
+    std::vector<int> h_labels(n);
+    cudaMemcpy(h_labels.data(), d_labels, n * sizeof(int), cudaMemcpyDeviceToHost);
+    
+    // Build offsets array for CUB segmented reduce
+    std::vector<int> h_offsets(numLabels + 1);
+    h_offsets[0] = 0;
+    int currentLabel = 0;
+    for (int i = 0; i < n; i++) {
+        while (currentLabel < h_labels[i]) {
+            h_offsets[++currentLabel] = i;
         }
     }
+    while (currentLabel < numLabels) {
+        h_offsets[++currentLabel] = n;
+    }
+    h_offsets[numLabels] = n;
+    
+    // Copy offsets to device
+    int *d_offsets;
+    cudaMalloc(&d_offsets, (numLabels + 1) * sizeof(int));
+    cudaMemcpy(d_offsets, h_offsets.data(), (numLabels + 1) * sizeof(int), cudaMemcpyHostToDevice);
+    
+    // Output array for per-segment max
+    DistIdx *d_segmentMax;
+    cudaMalloc(&d_segmentMax, numLabels * sizeof(DistIdx));
+    
+    // Run segmented reduce
+    d_temp = nullptr;
+    temp_bytes = 0;
+    DistIdx identity{-FLT_MAX, -1};
+    
+    cub::DeviceSegmentedReduce::Reduce(
+        d_temp, temp_bytes,
+        d_distIdx, d_segmentMax,
+        numLabels, d_offsets, d_offsets + 1,
+        MaxDistOp(), identity);
+    cudaMalloc(&d_temp, temp_bytes);
+    cub::DeviceSegmentedReduce::Reduce(
+        d_temp, temp_bytes,
+        d_distIdx, d_segmentMax,
+        numLabels, d_offsets, d_offsets + 1,
+        MaxDistOp(), identity);
+    cudaFree(d_temp);
+    
+    // Copy results back
+    std::vector<DistIdx> h_segmentMax(numLabels);
+    cudaMemcpy(h_segmentMax.data(), d_segmentMax, numLabels * sizeof(DistIdx), cudaMemcpyDeviceToHost);
+    
+    for (int i = 0; i < numLabels; i++) {
+        h_maxDist[i] = h_segmentMax[i].dist;
+        h_maxIdx[i] = h_segmentMax[i].idx;
+    }
+    
+    // Cleanup
+    cudaFree(d_segmentHeads);
+    cudaFree(d_segmentOffsets);
+    cudaFree(d_segmentIds);
+    cudaFree(d_offsets);
+    cudaFree(d_segmentMax);
 }
 
 // Kernel to update labels after finding max points
@@ -390,30 +600,31 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_px, d_py, d_labels,
             d_ansX, d_ansY, (int)ans.size(),
             d_distances, currentN);
+            
         cudaDeviceSynchronize();
 
-        // Find max distance point for each partition
-        // Allocate and initialize per-label max arrays
-        float *d_maxDistPerLabel;
-        int *d_maxIdxPerLabel;
-        cudaMalloc(&d_maxDistPerLabel, numLabels * sizeof(float));
-        cudaMalloc(&d_maxIdxPerLabel, numLabels * sizeof(int));
+        // Find max distance point for each partition using CUB segmented reduce
+        // This follows the paper's methodology: since points are sorted by label,
+        // we can use segmented operations efficiently
+        int *d_segmentOffsets;
+        DistIdxPair *d_maxPerSegment;
+        cudaMalloc(&d_segmentOffsets, (numLabels + 1) * sizeof(int));
+        cudaMalloc(&d_maxPerSegment, numLabels * sizeof(DistIdxPair));
         
-        // Initialize to -FLT_MAX and -1
-        std::vector<float> initDist(numLabels, -FLT_MAX);
-        std::vector<int> initIdx(numLabels, -1);
-        cudaMemcpy(d_maxDistPerLabel, initDist.data(), numLabels * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_maxIdxPerLabel, initIdx.data(), numLabels * sizeof(int), cudaMemcpyHostToDevice);
-        
-        findMaxDistPerLabelKernel<<<numBlocks, BLOCK_SIZE>>>(
-            d_distances, d_labels, d_maxDistPerLabel, d_maxIdxPerLabel, numLabels, currentN);
-        cudaDeviceSynchronize();
+        segmentedMaxDistReduce(d_distances, d_labels, d_segmentOffsets, 
+                               d_maxPerSegment, currentN, numLabels);
         
         // Copy results back to host
+        std::vector<DistIdxPair> h_maxPairs(numLabels);
+        cudaMemcpy(h_maxPairs.data(), d_maxPerSegment, numLabels * sizeof(DistIdxPair), cudaMemcpyDeviceToHost);
+        
+        // Extract max distances and indices
         std::vector<float> h_maxDist(numLabels);
         std::vector<int> h_maxIdx(numLabels);
-        cudaMemcpy(h_maxDist.data(), d_maxDistPerLabel, numLabels * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_maxIdx.data(), d_maxIdxPerLabel, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < numLabels; i++) {
+            h_maxDist[i] = h_maxPairs[i].dist;
+            h_maxIdx[i] = h_maxPairs[i].idx;
+        }
         
         // Check if any partition found a max point
         bool anyChanged = false;
@@ -425,14 +636,19 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         }
         
         if (!anyChanged) {
-            cudaFree(d_maxDistPerLabel);
-            cudaFree(d_maxIdxPerLabel);
+            cudaFree(d_segmentOffsets);
+            cudaFree(d_maxPerSegment);
             break;
         }
         
         // Build new ANS by inserting max points
         std::vector<Point> newAns;
         std::vector<int> labelMapping(numLabels);  // Maps old label to position in new ANS
+        
+        // Need maxIdx per label for updateLabelsKernel - copy to device
+        int *d_maxIdxPerLabel;
+        cudaMalloc(&d_maxIdxPerLabel, numLabels * sizeof(int));
+        cudaMemcpy(d_maxIdxPerLabel, h_maxIdx.data(), numLabels * sizeof(int), cudaMemcpyHostToDevice);
         
         int newLabel = 0;
         for (int i = 0; i < numLabels; i++) {
@@ -462,7 +678,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_newLabels, numLabels, currentN);
         cudaDeviceSynchronize();
         
-        cudaFree(d_maxDistPerLabel);
+        cudaFree(d_segmentOffsets);
+        cudaFree(d_maxPerSegment);
         cudaFree(d_maxIdxPerLabel);
         
         // =====================================================================
