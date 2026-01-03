@@ -130,43 +130,36 @@ __global__ void createSegmentFlagsKernel(int *labels, unsigned int *flags, int n
     }
 }
 
-// After segmented max scan, find points that have the max distance in their partition
-__global__ void findMaxPointFromScanKernel(float *px, float *py, int *labels,
-                                            float *distances, float *scanResult,
-                                            unsigned int *flags,
+// After segmented max reduce, find points that have the max distance in their partition
+// maxDistPerPartition: array of size numPartitions, contains max distance for each partition
+__global__ void findMaxPointFromReduceKernel(float *px, float *py, int *labels,
+                                            float *distances, float *maxDistPerPartition,
                                             int *maxIdx, int *state,
-                                            int n) {
+                                            int n, int numPartitions) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
 
     float d = distances[idx];
     int label = labels[idx];
 
-    // Check if this is the last element of the segment or next element starts new segment
-    // Note: check idx < n-1 first to avoid out-of-bounds read of flags[n]
-    bool isLastInSegment = (idx == n - 1) || (idx < n - 1 && flags[idx + 1] == 1);
+    // Get the max distance for this partition from the reduced output
+    float maxInPartition = maxDistPerPartition[label];
 
-    // Regardless of this point's distance, the thread that corresponds to the
-    // last element of a segment must set the partition state based on the
-    // computed segment maximum (scanResult). Previously we returned early for
-    // d <= 0 which skipped this and left state unset when the last element
-    // itself had non-positive distance.
-    if (isLastInSegment) {
-        float maxDist = scanResult[idx];
-        state[label] = (maxDist > 0) ? 1 : 0;
+    // Set state for this partition (any thread in the partition can do this, result is same)
+    // We use atomicMax to ensure at least one thread sets it
+    if (maxInPartition > 0) {
+        state[label] = 1;
     }
 
-    // If this point has positive distance and matches the segment maximum,
-    // try to publish its index as the segment max index.
-    if (d > 0) {
-        float maxInSegment = scanResult[idx];
-        if (d == maxInSegment) {
-            atomicMin(&maxIdx[label], idx);
-        }
+    // If this point has positive distance and matches the partition maximum,
+    // try to publish its index as the partition max index.
+    if (d > 0 && d == maxInPartition) {
+        atomicMin(&maxIdx[label], idx);
     }
 }
 
-void cubSegmentedMaxReduce(float *d_input, unsigned int *d_flags, float *d_output, int n) {
+// Output: d_output is sized for num_partitions (not n), stores max distance per partition
+void cubSegmentedMaxReduce(float *d_input, unsigned int *d_flags, float *d_output, int n, int num_partitions) {
     // d_flags: 1 at segment start, 0 elsewhere
     // Convert flags to segment offsets
     int num_segments = 0;
@@ -460,7 +453,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
 
     // steps 22-30
     unsigned int *d_segmentFlags;
-    float *d_scanResult;
+    float *d_maxDistPerPartition;
 
     cudaMalloc(&d_maxDist, maxAnsSize * sizeof(float));
     cudaMalloc(&d_maxIdx, maxAnsSize * sizeof(int));
@@ -478,7 +471,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
 
     // Allocate segmented scan arrays
     cudaMalloc(&d_segmentFlags, n * sizeof(unsigned int));
-    cudaMalloc(&d_scanResult, n * sizeof(float));
+    cudaMalloc(&d_maxDistPerPartition, maxAnsSize * sizeof(float));  // One max per partition
 
     int *h_state = new int[maxAnsSize];
     int *h_statePrefix = new int[maxAnsSize];
@@ -530,29 +523,29 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         cudaMemcpy(d_maxIdx, initMaxIdx.data(), numPartitions * sizeof(int), cudaMemcpyHostToDevice);
 
         // Steps 22-30
-        // Find max distance point per partition using segmented scan
+        // Find max distance point per partition using segmented reduce
         // Create segment flags (1 at start of each partition)
         createSegmentFlagsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_labels, d_segmentFlags, currentN);
         cudaDeviceSynchronize();
 
-        // Perform segmented max scan (negative distances won't win against positive ones)
-        cubSegmentedMaxReduce(d_distances, d_segmentFlags, d_scanResult, currentN);
+        // Perform segmented max reduce (outputs one max per partition)
+        cubSegmentedMaxReduce(d_distances, d_segmentFlags, d_maxDistPerPartition, currentN, numPartitions);
 
-        // Debug: Check scan results
-        float *h_scanResult = new float[currentN];
-        cudaMemcpy(h_scanResult, d_scanResult, currentN * sizeof(float), cudaMemcpyDeviceToHost);
-        printf("DEBUG: Segmented max results: ");
-        for (int i = 0; i < currentN; i++) {
-            printf("%.3f ", h_scanResult[i]);
+        // Debug: Check max distance per partition
+        float *h_maxDistPerPartition = new float[numPartitions];
+        cudaMemcpy(h_maxDistPerPartition, d_maxDistPerPartition, numPartitions * sizeof(float), cudaMemcpyDeviceToHost);
+        printf("DEBUG: Max distance per partition: ");
+        for (int i = 0; i < numPartitions; i++) {
+            printf("P%d:%.3f ", i, h_maxDistPerPartition[i]);
         }
         printf("\n");
-        delete[] h_scanResult;
+        delete[] h_maxDistPerPartition;
 
-        // Find max points from scan result (stores index atomically)
-        findMaxPointFromScanKernel<<<numBlocks, BLOCK_SIZE>>>(
-            d_px, d_py, d_labels, d_distances, d_scanResult, d_segmentFlags,
-            d_maxIdx, d_state, currentN);
+        // Find max points from reduce result (stores index atomically)
+        findMaxPointFromReduceKernel<<<numBlocks, BLOCK_SIZE>>>(
+            d_px, d_py, d_labels, d_distances, d_maxDistPerPartition,
+            d_maxIdx, d_state, currentN, numPartitions);
         cudaDeviceSynchronize();
 
         cudaMemcpy(h_state, d_state, numPartitions * sizeof(int), cudaMemcpyDeviceToHost);
@@ -728,7 +721,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     cudaFree(d_leftCount); cudaFree(d_rightCount);
     cudaFree(d_partitionStart);
     cudaFree(d_segmentFlags);
-    cudaFree(d_scanResult);
+    cudaFree(d_maxDistPerPartition);
 
     delete[] h_ansX; delete[] h_ansY;
     delete[] h_state; delete[] h_statePrefix;
