@@ -9,7 +9,7 @@ NVCCFLAGS := -O2 -std=c++17 -lineinfo -arch=sm_86 --ptxas-options=-v --use_fast_
 
 CPU_SRCS := \
 	cpu_graham.cpp \
-	cpu_jarvis.cpp \
+	cpu_monotone_chain.cpp \
 	cpu_quickhull.cpp
 
 GPU_SRCS := \
