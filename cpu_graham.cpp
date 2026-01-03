@@ -2,11 +2,12 @@
 #include "utils.h"
 using namespace std;
 
-// >0 - R is on the left of PQ, =0 - R is in line with PQ, <0 R is on the right of PQ
-static float orientation(const Point &p, const Point &q, const Point &r) {
+// >0 - R is on the left of PQ, =0 - R is in line with PQ, <0 - R is on the right of PQ
+// Return values: 1 = left turn (counter-clockwise), 0 = collinear, -1 = right turn (clockwise)
+static int orientation(const Point &p, const Point &q, const Point &r) {
     float val = (q.x - p.x)*(r.y - p.y) - (q.y - p.y)*(r.x - p.x);
-    if (val == 0) return 0;
-    return (val > 0) ? 1 : -1;
+    if (val == 0.0f) return 0;
+    return (val > 0.0f) ? 1 : -1;
 }
 
 static float dist(const Point &p, const Point &q) {
@@ -37,7 +38,8 @@ void grahamScan(float *p_x, float *p_y, int N, float *result_x, float *result_y,
     auto less_than = [p0](const Point &p1, const Point &p2) {
         int o = orientation(p0, p1, p2);
         if (o == 0) return dist(p0, p1) < dist(p0, p2);
-        return o == -1;
+        // place points with smaller polar angle first (counter-clockwise ordering)
+        return o == 1;
     };
 
     sort(points.begin()+1, points.end(), less_than);
@@ -48,7 +50,9 @@ void grahamScan(float *p_x, float *p_y, int N, float *result_x, float *result_y,
     hull.push_back(points[2]);
 
     for (int i = 3; i < N; i++) {
-        while (hull.size() >= 2 && orientation(hull[hull.size()-2], hull[hull.size()-1], points[i]) != -1)
+        // While the sequence of last two points and the new point does not make a left turn,
+        // pop the last point. We want to maintain counter-clockwise (left) turns.
+        while (hull.size() >= 2 && orientation(hull[hull.size()-2], hull[hull.size()-1], points[i]) != 1)
             hull.pop_back();
         hull.push_back(points[i]);
     }

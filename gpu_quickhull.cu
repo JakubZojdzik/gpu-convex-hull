@@ -86,10 +86,12 @@ void findMaxPointHost(float *h_blockMaxDist, int *h_blockMaxIdx, int numBlocks,
 // or right partition (positive distance from M->R)
 // We need to recompute distances to the two new edges
 // maxIdx is the index of the max point which should be EXCLUDED from both partitions
+// Also stores the new distances for each point (for use in next iteration)
 __global__ void classifyPointsForSplitKernel(float *px, float *py, float *oldDistances,
                                               float lx, float ly, float mx, float my, float rx, float ry,
                                               int maxIdx,
-                                              int *goesLeft, int *goesRight, int n) {
+                                              int *goesLeft, int *goesRight,
+                                              float *newDistLeft, float *newDistRight, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
 
@@ -97,6 +99,8 @@ __global__ void classifyPointsForSplitKernel(float *px, float *py, float *oldDis
     if (idx == maxIdx) {
         goesLeft[idx] = 0;
         goesRight[idx] = 0;
+        newDistLeft[idx] = 0;
+        newDistRight[idx] = 0;
         return;
     }
 
@@ -104,6 +108,8 @@ __global__ void classifyPointsForSplitKernel(float *px, float *py, float *oldDis
     if (oldDistances[idx] <= 0) {
         goesLeft[idx] = 0;
         goesRight[idx] = 0;
+        newDistLeft[idx] = 0;
+        newDistRight[idx] = 0;
         return;
     }
 
@@ -120,10 +126,16 @@ __global__ void classifyPointsForSplitKernel(float *px, float *py, float *oldDis
     // Point goes to right partition if it's outside M->R
     goesLeft[idx] = (distLM > 0) ? 1 : 0;
     goesRight[idx] = (distMR > 0) ? 1 : 0;
+    
+    // Store the new distances for use in next iteration
+    newDistLeft[idx] = distLM;
+    newDistRight[idx] = distMR;
 }
 
 // Compact points into new arrays based on prefix sums
-__global__ void compactPointsKernel(float *px, float *py, float *distances,
+// Uses the new distances computed by classifyPointsForSplitKernel
+__global__ void compactPointsKernel(float *px, float *py,
+                                     float *newDistLeft, float *newDistRight,
                                      int *goesLeft, int *goesRight,
                                      int *leftScan, int *rightScan, int rightOffset,
                                      float *pxNew, float *pyNew, float *distNew, int n) {
@@ -134,12 +146,12 @@ __global__ void compactPointsKernel(float *px, float *py, float *distances,
         int newIdx = leftScan[idx];
         pxNew[newIdx] = px[idx];
         pyNew[newIdx] = py[idx];
-        distNew[newIdx] = distances[idx];
+        distNew[newIdx] = newDistLeft[idx];  // Use new distance from L->M
     } else if (goesRight[idx]) {
         int newIdx = rightOffset + rightScan[idx];
         pxNew[newIdx] = px[idx];
         pyNew[newIdx] = py[idx];
-        distNew[newIdx] = distances[idx];
+        distNew[newIdx] = newDistRight[idx];  // Use new distance from M->R
     }
 }
 
@@ -192,6 +204,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     // Allocate device memory
     float *d_px, *d_py, *d_pxNew, *d_pyNew;
     float *d_distances, *d_distNew;
+    float *d_newDistLeft, *d_newDistRight;  // For storing recomputed distances after split
     int *d_goesLeft, *d_goesRight, *d_leftScan, *d_rightScan;
 
     cudaMalloc(&d_px, n * sizeof(float));
@@ -200,6 +213,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     cudaMalloc(&d_pyNew, n * sizeof(float));
     cudaMalloc(&d_distances, n * sizeof(float));
     cudaMalloc(&d_distNew, n * sizeof(float));
+    cudaMalloc(&d_newDistLeft, n * sizeof(float));
+    cudaMalloc(&d_newDistRight, n * sizeof(float));
     cudaMalloc(&d_goesLeft, n * sizeof(int));
     cudaMalloc(&d_goesRight, n * sizeof(int));
     cudaMalloc(&d_leftScan, n * sizeof(int));
@@ -309,7 +324,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
                 d_px + part.start, d_py + part.start, d_distances + part.start,
                 L.x, L.y, maxPx, maxPy, R.x, R.y,
                 h_maxIdx,
-                d_goesLeft + part.start, d_goesRight + part.start, part.count);
+                d_goesLeft + part.start, d_goesRight + part.start,
+                d_newDistLeft + part.start, d_newDistRight + part.start, part.count);
             cudaDeviceSynchronize();
 
             // Prefix sums for compaction
@@ -331,9 +347,10 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             allNewPx.resize(newStart + leftCount + rightCount);
             allNewPy.resize(newStart + leftCount + rightCount);
 
-            // Copy to device temp arrays
+            // Copy to device temp arrays (use new distances, not old ones)
             compactPointsKernel<<<numBlocks, BLOCK_SIZE>>>(
-                d_px + part.start, d_py + part.start, d_distances + part.start,
+                d_px + part.start, d_py + part.start,
+                d_newDistLeft + part.start, d_newDistRight + part.start,
                 d_goesLeft + part.start, d_goesRight + part.start,
                 d_leftScan + part.start, d_rightScan + part.start, leftCount,
                 d_pxNew, d_pyNew, d_distNew, part.count);
@@ -383,6 +400,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     cudaFree(d_pyNew);
     cudaFree(d_distances);
     cudaFree(d_distNew);
+    cudaFree(d_newDistLeft);
+    cudaFree(d_newDistRight);
     cudaFree(d_goesLeft);
     cudaFree(d_goesRight);
     cudaFree(d_leftScan);
