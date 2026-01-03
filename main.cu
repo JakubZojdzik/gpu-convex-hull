@@ -29,25 +29,19 @@ static int countUniquePoints(const float *x,
 {
     if (n == 0) return 0;
 
-    struct P { float x, y; };
-    std::vector<P> pts(n);
+    int unique = 0;
 
-    for (int i = 0; i < n; i++)
-        pts[i] = {x[i], y[i]};
-
-    std::sort(pts.begin(), pts.end(),
-              [&](const P &a, const P &b) {
-                  if (fabs(a.x - b.x) > eps) return a.x < b.x;
-                  return a.y < b.y;
-              });
-
-    int unique = 1;
-    for (int i = 1; i < n; i++) {
-        if (fabs(pts[i].x - pts[i-1].x) > eps ||
-            fabs(pts[i].y - pts[i-1].y) > eps)
-        {
-            unique++;
+    for (int i = 0; i < n; i++) {
+        bool is_new = true;
+        for (int j = 0; j < i; j++) {
+            if (fabs(x[i] - x[j]) <= eps &&
+                fabs(y[i] - y[j]) <= eps)
+            {
+                is_new = false;
+                break;
+            }
         }
+        if (is_new) unique++;
     }
     return unique;
 }
