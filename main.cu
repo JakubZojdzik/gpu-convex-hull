@@ -19,7 +19,7 @@ extern "C" void gpuQuickHull(
 
 int main()
 {
-    int N = 50;
+    int N = 30;
 
     float *px = (float*) malloc(sizeof(float) * N);
     float *py = (float*) malloc(sizeof(float) * N);
@@ -37,6 +37,13 @@ int main()
         }
     }
 
+    printf("Input Points:\n[");
+    for (int i = 0; i < N; i++) {
+        printf("(%.3f, %.3f)", px[i], py[i]);
+        if (i < N - 1) printf(", ");
+    }
+    printf("]\n");
+
     float *result_x = (float*) malloc(sizeof(float) * N);
     float *result_y = (float*) malloc(sizeof(float) * N);
     int M_cpu = 0, M_gpu = 0;
@@ -47,10 +54,12 @@ int main()
     auto cpu_end = std::chrono::high_resolution_clock::now();
     double cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
 
-    printf("CPU Graham Scan\n");
+    printf("CPU Graham Scan:\n[");
     for (int i = 0; i < M_cpu; i++) {
-        printf("Hull point %d: (%.3f, %.3f)\n", i, result_x[i], result_y[i]);
+        printf("(%.3f, %.3f)", result_x[i], result_y[i]);
+        if (i < M_cpu - 1) printf(", ");
     }
+    printf("]\n");
     printf("Hull size: %d\n", M_cpu);
     printf("Time: %.3f ms\n\n", cpu_ms);
 
@@ -64,10 +73,12 @@ int main()
     auto gpu_end = std::chrono::high_resolution_clock::now();
     double gpu_ms = std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
 
-    printf("GPU QuickHull\n");
+    printf("GPU QuickHull:\n[");
     for (int i = 0; i < M_gpu; i++) {
-        printf("Hull point %d: (%.3f, %.3f)\n", i, result_x[i], result_y[i]);
+        printf("(%.3f, %.3f)", result_x[i], result_y[i]);
+        if (i < M_gpu - 1) printf(", ");
     }
+    printf("]\n");
     printf("Hull size: %d\n", M_gpu);
     printf("Time: %.3f ms\n", gpu_ms);
 
