@@ -7,7 +7,6 @@
 #include <cub/device/device_scan.cuh>
 #include <cub/device/device_reduce.cuh>
 #include <cub/device/device_segmented_reduce.cuh>
-#include <cub/device/device_radix_sort.cuh>
 #include "utils.h"
 
 #define BLOCK_SIZE 512
@@ -350,28 +349,53 @@ __global__ void updateLabelsKernel(float *px, float *py, int *labels,
     }
 }
 
-// Kernel to create survive flags directly from labels (1 if label >= 0)
-__global__ void createSurviveFlagsKernel(int *labels, int *survives, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) return;
-    survives[idx] = (labels[idx] >= 0) ? 1 : 0;
-}
-
-// Simple compaction kernel - just removes eliminated points
-// Points keep their relative order and labels
-__global__ void compactKernel(float *pxIn, float *pyIn, int *labelsIn,
-                              int *scanResult,
-                              float *pxOut, float *pyOut, int *labelsOut,
-                              int n) {
+// Kernel to mark points going to left or right sub-partition
+// goesLeft[i] = 1 if point i goes to left sub-partition (label 2*oldLabel)
+// goesRight[i] = 1 if point i goes to right sub-partition (label 2*oldLabel+1)
+// eliminated[i] = 1 if point is eliminated (label -1)
+__global__ void classifyForCompactionKernel(int *newLabels, 
+                                             int *goesLeft, int *goesRight, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
     
-    if (labelsIn[idx] >= 0) {
-        int outIdx = scanResult[idx];
-        pxOut[outIdx] = pxIn[idx];
-        pyOut[outIdx] = pyIn[idx];
-        labelsOut[outIdx] = labelsIn[idx];
+    int label = newLabels[idx];
+    if (label < 0) {
+        goesLeft[idx] = 0;
+        goesRight[idx] = 0;
+    } else if (label % 2 == 0) {
+        goesLeft[idx] = 1;
+        goesRight[idx] = 0;
+    } else {
+        goesLeft[idx] = 0;
+        goesRight[idx] = 1;
     }
+}
+
+// Kernel to compact and sort points by label using prefix scan results
+// Points are written in order: all left partition points first, then all right partition points
+// Within each group, they maintain their relative order (stable)
+__global__ void compactSortedByLabelKernel(float *pxIn, float *pyIn, int *labelsIn,
+                                            int *goesLeft, int *goesRight,
+                                            int *leftScan, int *rightScan,
+                                            int leftTotal,
+                                            float *pxOut, float *pyOut, int *labelsOut,
+                                            int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    
+    int label = labelsIn[idx];
+    if (label < 0) return;  // Eliminated point
+    
+    int outIdx;
+    if (goesLeft[idx]) {
+        outIdx = leftScan[idx];
+    } else {
+        outIdx = leftTotal + rightScan[idx];
+    }
+    
+    pxOut[outIdx] = pxIn[idx];
+    pyOut[outIdx] = pyIn[idx];
+    labelsOut[outIdx] = label;
 }
 
 // After compaction, we need to renumber labels to be contiguous (0, 1, 2, ...)
@@ -528,39 +552,51 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaFree(d_maxIdxPerLabel);
         
         // =====================================================================
-        // Compact points: remove eliminated (label == -1) and sort by label
+        // Compact and sort points by label using prefix scans
+        // This maintains the invariant that points are sorted by label
         // =====================================================================
         
         // Allocate arrays for compaction
-        int *d_survives;
-        int *d_scanResult;
+        int *d_goesLeft, *d_goesRight;
+        int *d_leftScan, *d_rightScan;
         float *d_pxNew, *d_pyNew;
         int *d_labelsNew;
         
-        cudaMalloc(&d_survives, currentN * sizeof(int));
-        cudaMalloc(&d_scanResult, currentN * sizeof(int));
+        cudaMalloc(&d_goesLeft, currentN * sizeof(int));
+        cudaMalloc(&d_goesRight, currentN * sizeof(int));
+        cudaMalloc(&d_leftScan, currentN * sizeof(int));
+        cudaMalloc(&d_rightScan, currentN * sizeof(int));
         cudaMalloc(&d_pxNew, currentN * sizeof(float));
         cudaMalloc(&d_pyNew, currentN * sizeof(float));
         cudaMalloc(&d_labelsNew, currentN * sizeof(int));
         
-        // Create survive flags directly from labels
-        createSurviveFlagsKernel<<<numBlocks, BLOCK_SIZE>>>(
-            d_newLabels, d_survives, currentN);
+        // Classify points: left (even label), right (odd label), or eliminated (-1)
+        classifyForCompactionKernel<<<numBlocks, BLOCK_SIZE>>>(
+            d_newLabels, d_goesLeft, d_goesRight, currentN);
         cudaDeviceSynchronize();
         
-        // Prefix sum for compaction
-        cubExclusiveScanInt(d_survives, d_scanResult, currentN);
+        // Prefix sums for compaction
+        cubExclusiveScanInt(d_goesLeft, d_leftScan, currentN);
+        cubExclusiveScanInt(d_goesRight, d_rightScan, currentN);
         
-        // Get total count of surviving points
-        int lastSurvive, lastScan;
-        cudaMemcpy(&lastSurvive, d_survives + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(&lastScan, d_scanResult + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
-        int newN = lastScan + lastSurvive;
+        // Get total counts
+        int leftTotal, rightTotal;
+        int lastLeft, lastRight;
+        cudaMemcpy(&leftTotal, d_leftScan + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&lastLeft, d_goesLeft + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        leftTotal += lastLeft;
+        cudaMemcpy(&rightTotal, d_rightScan + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&lastRight, d_goesRight + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        rightTotal += lastRight;
+        
+        int newN = leftTotal + rightTotal;
         
         if (newN == 0) {
             cudaFree(d_newLabels);
-            cudaFree(d_survives);
-            cudaFree(d_scanResult);
+            cudaFree(d_goesLeft);
+            cudaFree(d_goesRight);
+            cudaFree(d_leftScan);
+            cudaFree(d_rightScan);
             cudaFree(d_pxNew);
             cudaFree(d_pyNew);
             cudaFree(d_labelsNew);
@@ -568,16 +604,18 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             break;
         }
         
-        // Compact points (remove eliminated ones) - survives check is done inline via label
-        compactKernel<<<numBlocks, BLOCK_SIZE>>>(
+        // Compact points, putting left partition points first, then right
+        // This maintains sorted order by label since:
+        // - Points with even labels (left partitions) come first
+        // - Points with odd labels (right partitions) come after
+        // - Within each group, relative order is preserved (stable)
+        compactSortedByLabelKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_px, d_py, d_newLabels,
-            d_scanResult,
+            d_goesLeft, d_goesRight,
+            d_leftScan, d_rightScan, leftTotal,
             d_pxNew, d_pyNew, d_labelsNew,
             currentN);
         cudaDeviceSynchronize();
-        
-        cudaFree(d_survives);
-        cudaFree(d_scanResult);
         
         // Now we need to renumber labels to be contiguous (0, 1, 2, ...)
         // Build label mapping: sparse label -> contiguous label
@@ -606,78 +644,20 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         
         cudaFree(d_labelMapping);
         
-        // Sort points by label using CUB radix sort
-        // We need to sort (labels, px, py) together by labels as keys
-        // Use indices as values, then gather
-        int *d_indices, *d_indicesOut;
-        int *d_labelsSorted;
-        cudaMalloc(&d_indices, newN * sizeof(int));
-        cudaMalloc(&d_indicesOut, newN * sizeof(int));
-        cudaMalloc(&d_labelsSorted, newN * sizeof(int));
-        
-        // Initialize indices
-        int *h_indices = new int[newN];
-        for (int i = 0; i < newN; i++) h_indices[i] = i;
-        cudaMemcpy(d_indices, h_indices, newN * sizeof(int), cudaMemcpyHostToDevice);
-        delete[] h_indices;
-        
-        // Sort labels with indices as values
-        void *d_temp = nullptr;
-        size_t temp_bytes = 0;
-        cub::DeviceRadixSort::SortPairs(d_temp, temp_bytes,
-            d_labelsNew, d_labelsSorted, d_indices, d_indicesOut, newN);
-        cudaMalloc(&d_temp, temp_bytes);
-        cub::DeviceRadixSort::SortPairs(d_temp, temp_bytes,
-            d_labelsNew, d_labelsSorted, d_indices, d_indicesOut, newN);
-        cudaFree(d_temp);
-        
-        // Gather px, py using sorted indices
-        float *d_pxSorted, *d_pySorted;
-        cudaMalloc(&d_pxSorted, newN * sizeof(float));
-        cudaMalloc(&d_pySorted, newN * sizeof(float));
-        
-        // Simple gather kernel inline
-        {
-            int *h_indicesOut = new int[newN];
-            float *h_pxNew = new float[newN];
-            float *h_pyNew = new float[newN];
-            float *h_pxSorted = new float[newN];
-            float *h_pySorted = new float[newN];
-            
-            cudaMemcpy(h_indicesOut, d_indicesOut, newN * sizeof(int), cudaMemcpyDeviceToHost);
-            cudaMemcpy(h_pxNew, d_pxNew, newN * sizeof(float), cudaMemcpyDeviceToHost);
-            cudaMemcpy(h_pyNew, d_pyNew, newN * sizeof(float), cudaMemcpyDeviceToHost);
-            
-            for (int i = 0; i < newN; i++) {
-                h_pxSorted[i] = h_pxNew[h_indicesOut[i]];
-                h_pySorted[i] = h_pyNew[h_indicesOut[i]];
-            }
-            
-            cudaMemcpy(d_pxSorted, h_pxSorted, newN * sizeof(float), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_pySorted, h_pySorted, newN * sizeof(float), cudaMemcpyHostToDevice);
-            
-            delete[] h_indicesOut;
-            delete[] h_pxNew;
-            delete[] h_pyNew;
-            delete[] h_pxSorted;
-            delete[] h_pySorted;
-        }
-        
-        // Copy sorted data to main buffers
-        cudaMemcpy(d_px, d_pxSorted, newN * sizeof(float), cudaMemcpyDeviceToDevice);
-        cudaMemcpy(d_py, d_pySorted, newN * sizeof(float), cudaMemcpyDeviceToDevice);
-        cudaMemcpy(d_labels, d_labelsSorted, newN * sizeof(int), cudaMemcpyDeviceToDevice);
+        // Swap buffers
+        cudaMemcpy(d_px, d_pxNew, newN * sizeof(float), cudaMemcpyDeviceToDevice);
+        cudaMemcpy(d_py, d_pyNew, newN * sizeof(float), cudaMemcpyDeviceToDevice);
+        cudaMemcpy(d_labels, d_labelsNew, newN * sizeof(int), cudaMemcpyDeviceToDevice);
         
         // Cleanup temp arrays
         cudaFree(d_newLabels);
+        cudaFree(d_goesLeft);
+        cudaFree(d_goesRight);
+        cudaFree(d_leftScan);
+        cudaFree(d_rightScan);
         cudaFree(d_pxNew);
         cudaFree(d_pyNew);
         cudaFree(d_labelsNew);
-        cudaFree(d_indices);
-        cudaFree(d_indicesOut);
-        cudaFree(d_labelsSorted);
-        cudaFree(d_pxSorted);
-        cudaFree(d_pySorted);
         
         currentN = newN;
         ans = newAns;
