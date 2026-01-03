@@ -15,6 +15,112 @@
 // All points have label=0, single partition that recursively splits
 // ============================================================================
 
+static struct MinMaxPoint {
+    float x;
+    float y;
+    int   idx;
+};
+
+struct MinXOp {
+    __host__ __device__
+    MinMaxPoint operator()(const MinMaxPoint &a,
+                           const MinMaxPoint &b) const
+    {
+        if (a.x < b.x) return a;
+        if (a.x > b.x) return b;
+        return (a.y < b.y) ? a : b;
+    }
+};
+
+struct MaxXOp {
+    __host__ __device__
+    MinMaxPoint operator()(const MinMaxPoint &a,
+                           const MinMaxPoint &b) const
+    {
+        if (a.x > b.x) return a;
+        if (a.x < b.x) return b;
+        return (a.y > b.y) ? a : b;
+    }
+};
+
+
+__global__ void buildPointArray(const float *px,
+                                const float *py,
+                                MinMaxPoint *out,
+                                int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        out[i].x   = px[i];
+        out[i].y   = py[i];
+        out[i].idx = i;
+    }
+}
+
+void findMinMaxX_CUB(const float *d_px,
+                     const float *d_py,
+                     int n,
+                     MinMaxPoint &h_min,
+                     MinMaxPoint &h_max)
+{
+    // Build point array
+    MinMaxPoint *d_points;
+    cudaMalloc(&d_points, n * sizeof(MinMaxPoint));
+
+    int grid  = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    buildPointArray<<<grid, BLOCK_SIZE>>>(d_px, d_py, d_points, n);
+
+    // Output buffers
+    MinMaxPoint *d_min, *d_max;
+    cudaMalloc(&d_min, sizeof(MinMaxPoint));
+    cudaMalloc(&d_max, sizeof(MinMaxPoint));
+
+    // Temporary storage
+    void *d_temp = nullptr;
+    size_t temp_bytes = 0;
+
+    // Query temp size (min)
+    cub::DeviceReduce::Reduce(
+        d_temp, temp_bytes,
+        d_points, d_min,
+        n,
+        MinXOp(),
+        MinMaxPoint{FLT_MAX, FLT_MAX, -1}
+    );
+
+    cudaMalloc(&d_temp, temp_bytes);
+
+    // Run min reduction
+    cub::DeviceReduce::Reduce(
+        d_temp, temp_bytes,
+        d_points, d_min,
+        n,
+        MinXOp(),
+        MinMaxPoint{FLT_MAX, FLT_MAX, -1}
+    );
+
+    // Run max reduction (reuse temp storage)
+    cub::DeviceReduce::Reduce(
+        d_temp, temp_bytes,
+        d_points, d_max,
+        n,
+        MaxXOp(),
+        MinMaxPoint{-FLT_MAX, -FLT_MAX, -1}
+    );
+
+    // Copy back
+    cudaMemcpy(&h_min, d_min, sizeof(MinMaxPoint), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&h_max, d_max, sizeof(MinMaxPoint), cudaMemcpyDeviceToHost);
+
+    // Cleanup
+    cudaFree(d_temp);
+    cudaFree(d_points);
+    cudaFree(d_min);
+    cudaFree(d_max);
+}
+
+
+
 // Compute perpendicular distance from line (lx,ly)->(rx,ry) for each point
 // Positive distance = point is to the LEFT of the directed line
 __global__ void computeDistancesSimpleKernel(float *px, float *py,
@@ -427,22 +533,22 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         return;
     }
 
-    // Find min and max X points
-    float minX = FLT_MAX, maxX = -FLT_MAX;
-    int minIdx = 0, maxIdx = 0;
-    for (int i = 0; i < n; i++) {
-        if (h_px[i] < minX || (h_px[i] == minX && h_py[i] < h_py[minIdx])) {
-            minX = h_px[i];
-            minIdx = i;
-        }
-        if (h_px[i] > maxX || (h_px[i] == maxX && h_py[i] > h_py[maxIdx])) {
-            maxX = h_px[i];
-            maxIdx = i;
-        }
-    }
+    // Copy points to device for CUB reduction
+    float *d_px, *d_py;
+    cudaMalloc(&d_px, n * sizeof(float));
+    cudaMalloc(&d_py, n * sizeof(float));
+    cudaMemcpy(d_px, h_px, n * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_py, h_py, n * sizeof(float), cudaMemcpyHostToDevice);
 
-    Point minPt = {h_px[minIdx], h_py[minIdx]};
-    Point maxPt = {h_px[maxIdx], h_py[maxIdx]};
+    // Use GPU-accelerated min/max finding
+    MinMaxPoint h_min, h_max;
+    findMinMaxX_CUB(d_px, d_py, n, h_min, h_max);
+
+    cudaFree(d_px);
+    cudaFree(d_py);
+
+    Point minPt = {h_min.x, h_min.y};
+    Point maxPt = {h_max.x, h_max.y};
 
     // Partition points into upper (above MIN->MAX line) and lower (below)
     std::vector<float> upperX, upperY, lowerX, lowerY;
