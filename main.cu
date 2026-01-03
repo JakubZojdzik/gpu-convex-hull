@@ -67,13 +67,13 @@ int main()
         }
     }
 
-    // printf("Input Points:\n");
-    // printf("[");
-    // for (int i = 0; i < N; i++) {
-    //     printf("(%.3f, %.3f)", px[i], py[i]);
-    //     if (i < N - 1) printf(", ");
-    // }
-    // printf("]\n");
+    printf("Input Points:\n");
+    printf("[");
+    for (int i = 0; i < N; i++) {
+        printf("(%.3f, %.3f)", px[i], py[i]);
+        if (i < N - 1) printf(", ");
+    }
+    printf("]\n");
 
     float *result_x = (float*) malloc(sizeof(float) * N);
     float *result_y = (float*) malloc(sizeof(float) * N);
@@ -86,12 +86,12 @@ int main()
     double cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
 
     printf("CPU Monotone chain:\n");
-    // printf("[");
-    // for (int i = 0; i < M_cpu; i++) {
-    //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
-    //     if (i < M_cpu - 1) printf(", ");
-    // }
-    // printf("]\n");
+    printf("[");
+    for (int i = 0; i < M_cpu; i++) {
+        printf("(%.3f, %.3f)", result_x[i], result_y[i]);
+        if (i < M_cpu - 1) printf(", ");
+    }
+    printf("]\n");
     int unique_cpu = countUniquePoints(result_x, result_y, M_cpu);
     printf("Unique hull points: %d\n", unique_cpu);
     printf("Hull size: %d\n", M_cpu);
@@ -122,12 +122,12 @@ int main()
     double gpu_ms = std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
 
     printf("GPU QuickHull:\n");
-    // printf("[");
-    // for (int i = 0; i < M_gpu; i++) {
-    //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
-    //     if (i < M_gpu - 1) printf(", ");
-    // }
-    // printf("]\n");
+    printf("[");
+    for (int i = 0; i < M_gpu; i++) {
+        printf("(%.3f, %.3f)", result_x[i], result_y[i]);
+        if (i < M_gpu - 1) printf(", ");
+    }
+    printf("]\n");
     int unique_gpu = countUniquePoints(result_x, result_y, M_gpu);
     printf("Unique hull points: %d\n", unique_gpu);
     printf("Hull size: %d\n", M_gpu);
