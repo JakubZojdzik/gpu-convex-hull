@@ -15,7 +15,7 @@
 // All points have label=0, single partition that recursively splits
 // ============================================================================
 
-static struct MinMaxPoint {
+struct MinMaxPoint {
     float x;
     float y;
     int   idx;
