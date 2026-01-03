@@ -198,7 +198,7 @@ void segmentedMaxDistReduce(
     void *d_temp = nullptr;
     size_t temp_bytes = 0;
     
-    DistIdxPair identity{-FLT_MAX, -1};
+    DistIdxPair identity{0, -1};
     
     // Query temp storage size
     cub::DeviceSegmentedReduce::Reduce(
