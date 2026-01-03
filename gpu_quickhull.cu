@@ -31,9 +31,10 @@ __global__ void computeDistancesSimpleKernel(float *px, float *py,
     distances[idx] = d;
 }
 
-// Find index of point with maximum distance (only among positive distances)
-// Returns -1 if no point has positive distance
-__global__ void findMaxDistPointKernel(float *distances, int *maxIdx, float *maxDist, int n) {
+// Find index of point with maximum positive distance
+// Simple kernel that each thread writes its candidate, then host finds max
+// This is simpler and more correct than trying to do atomic argmax
+__global__ void findMaxDistPointKernel(float *distances, float *blockMaxDist, int *blockMaxIdx, int n) {
     __shared__ float sharedDist[BLOCK_SIZE];
     __shared__ int sharedIdx[BLOCK_SIZE];
 
@@ -61,35 +62,55 @@ __global__ void findMaxDistPointKernel(float *distances, int *maxIdx, float *max
         __syncthreads();
     }
 
-    // Block winner updates global max atomically
-    if (tid == 0 && sharedDist[0] > 0) {
-        // Use atomicMax on a float by casting to int (works for positive floats)
-        int oldVal = atomicMax((int*)maxDist, __float_as_int(sharedDist[0]));
-        if (__float_as_int(sharedDist[0]) > oldVal) {
-            *maxIdx = sharedIdx[0];
+    // Block 0 writes its result
+    if (tid == 0) {
+        blockMaxDist[blockIdx.x] = sharedDist[0];
+        blockMaxIdx[blockIdx.x] = sharedIdx[0];
+    }
+}
+
+// Host function to find max among block results
+void findMaxPointHost(float *h_blockMaxDist, int *h_blockMaxIdx, int numBlocks, 
+                      int *outIdx, float *outDist) {
+    *outIdx = -1;
+    *outDist = -FLT_MAX;
+    for (int i = 0; i < numBlocks; i++) {
+        if (h_blockMaxDist[i] > *outDist) {
+            *outDist = h_blockMaxDist[i];
+            *outIdx = h_blockMaxIdx[i];
         }
     }
 }
 
-// Mark points that should go to left partition (positive distance, x < maxPoint.x)
-// or right partition (positive distance, x >= maxPoint.x)
-__global__ void classifyPointsSimpleKernel(float *px, float *distances, float maxPx,
-                                            int *goesLeft, int *goesRight, int n) {
+// Mark points that should go to left partition (positive distance from L->M)
+// or right partition (positive distance from M->R)
+// We need to recompute distances to the two new edges
+__global__ void classifyPointsForSplitKernel(float *px, float *py, float *oldDistances,
+                                              float lx, float ly, float mx, float my, float rx, float ry,
+                                              int *goesLeft, int *goesRight, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
 
-    if (distances[idx] > 0) {
-        if (px[idx] < maxPx) {
-            goesLeft[idx] = 1;
-            goesRight[idx] = 0;
-        } else {
-            goesLeft[idx] = 0;
-            goesRight[idx] = 1;
-        }
-    } else {
+    // Only consider points that were outside the original L->R line
+    if (oldDistances[idx] <= 0) {
         goesLeft[idx] = 0;
         goesRight[idx] = 0;
+        return;
     }
+
+    float curX = px[idx];
+    float curY = py[idx];
+
+    // Distance from L->M line (positive = left of line)
+    float distLM = (mx - lx) * (curY - ly) - (my - ly) * (curX - lx);
+    
+    // Distance from M->R line (positive = left of line)
+    float distMR = (rx - mx) * (curY - my) - (ry - my) * (curX - mx);
+
+    // Point goes to left partition if it's outside L->M
+    // Point goes to right partition if it's outside M->R
+    goesLeft[idx] = (distLM > 0) ? 1 : 0;
+    goesRight[idx] = (distMR > 0) ? 1 : 0;
 }
 
 // Compact points into new arrays based on prefix sums
@@ -220,32 +241,39 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
                 continue;
             }
 
-            // Compute distances for this partition's points
+            // Find max distance point using block-level reduction
             int numBlocks = (part.count + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            
+            // Compute distances for this partition's points
             computeDistancesSimpleKernel<<<numBlocks, BLOCK_SIZE>>>(
                 d_px + part.start, d_py + part.start,
                 L.x, L.y, R.x, R.y,
                 d_distances + part.start, part.count);
             cudaDeviceSynchronize();
 
-            // Find max distance point
-            int h_maxIdx = -1;
-            float h_maxDist = -FLT_MAX;
-            int *d_maxIdx;
-            float *d_maxDist;
-            cudaMalloc(&d_maxIdx, sizeof(int));
-            cudaMalloc(&d_maxDist, sizeof(float));
-            cudaMemcpy(d_maxIdx, &h_maxIdx, sizeof(int), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_maxDist, &h_maxDist, sizeof(float), cudaMemcpyHostToDevice);
+            float *d_blockMaxDist;
+            int *d_blockMaxIdx;
+            cudaMalloc(&d_blockMaxDist, numBlocks * sizeof(float));
+            cudaMalloc(&d_blockMaxIdx, numBlocks * sizeof(int));
 
             findMaxDistPointKernel<<<numBlocks, BLOCK_SIZE>>>(
-                d_distances + part.start, d_maxIdx, d_maxDist, part.count);
+                d_distances + part.start, d_blockMaxDist, d_blockMaxIdx, part.count);
             cudaDeviceSynchronize();
 
-            cudaMemcpy(&h_maxIdx, d_maxIdx, sizeof(int), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&h_maxDist, d_maxDist, sizeof(float), cudaMemcpyDeviceToHost);
-            cudaFree(d_maxIdx);
-            cudaFree(d_maxDist);
+            // Copy block results to host and find global max
+            float *h_blockMaxDist = new float[numBlocks];
+            int *h_blockMaxIdx = new int[numBlocks];
+            cudaMemcpy(h_blockMaxDist, d_blockMaxDist, numBlocks * sizeof(float), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_blockMaxIdx, d_blockMaxIdx, numBlocks * sizeof(int), cudaMemcpyDeviceToHost);
+            
+            int h_maxIdx;
+            float h_maxDist;
+            findMaxPointHost(h_blockMaxDist, h_blockMaxIdx, numBlocks, &h_maxIdx, &h_maxDist);
+            
+            delete[] h_blockMaxDist;
+            delete[] h_blockMaxIdx;
+            cudaFree(d_blockMaxDist);
+            cudaFree(d_blockMaxIdx);
 
             if (h_maxIdx < 0 || h_maxDist <= 0) {
                 // No point outside the line, partition is done
@@ -262,14 +290,12 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             // Add max point to ANS (between L and R)
             newAns.push_back({maxPx, maxPy});
 
-            // Classify points: left of maxPoint or right of maxPoint
+            // Classify points based on which new edge they're outside of:
             // Left partition: points with positive distance from L->maxP
             // Right partition: points with positive distance from maxP->R
-            
-            // For simplicity, we use X coordinate to split (as in paper)
-            // Points with x < maxPx go to left partition, x >= maxPx go to right
-            classifyPointsSimpleKernel<<<numBlocks, BLOCK_SIZE>>>(
-                d_px + part.start, d_distances + part.start, maxPx,
+            classifyPointsForSplitKernel<<<numBlocks, BLOCK_SIZE>>>(
+                d_px + part.start, d_py + part.start, d_distances + part.start,
+                L.x, L.y, maxPx, maxPy, R.x, R.y,
                 d_goesLeft + part.start, d_goesRight + part.start, part.count);
             cudaDeviceSynchronize();
 
