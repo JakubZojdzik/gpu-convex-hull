@@ -7,7 +7,6 @@
 #include <cub/device/device_scan.cuh>
 #include <cub/device/device_reduce.cuh>
 #include <cub/device/device_segmented_reduce.cuh>
-#include <cub/device/device_radix_sort.cuh>
 #include "utils.h"
 
 #define BLOCK_SIZE 512
@@ -350,38 +349,64 @@ __global__ void updateLabelsKernel(float *px, float *py, int *labels,
     }
 }
 
-// Kernel to create survive flags (1 if label >= 0, else 0)
-__global__ void createSurviveFlagsKernel(int *labels, int *survives, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) return;
-    survives[idx] = (labels[idx] >= 0) ? 1 : 0;
-}
-
-// Simple compaction kernel - removes eliminated points, keeps relative order
-__global__ void compactKernel(float *pxIn, float *pyIn, int *labelsIn,
-                              int *scanResult,
-                              float *pxOut, float *pyOut, int *labelsOut,
-                              int n) {
+// Kernel to mark points going to left or right sub-partition
+// goesLeft[i] = 1 if point i goes to left sub-partition (label 2*oldLabel)
+// goesRight[i] = 1 if point i goes to right sub-partition (label 2*oldLabel+1)
+// eliminated[i] = 1 if point is eliminated (label -1)
+__global__ void classifyForCompactionKernel(int *newLabels, 
+                                             int *goesLeft, int *goesRight, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
     
-    if (labelsIn[idx] >= 0) {
-        int outIdx = scanResult[idx];
-        pxOut[outIdx] = pxIn[idx];
-        pyOut[outIdx] = pyIn[idx];
-        labelsOut[outIdx] = labelsIn[idx];
+    int label = newLabels[idx];
+    if (label < 0) {
+        goesLeft[idx] = 0;
+        goesRight[idx] = 0;
+    } else if (label % 2 == 0) {
+        goesLeft[idx] = 1;
+        goesRight[idx] = 0;
+    } else {
+        goesLeft[idx] = 0;
+        goesRight[idx] = 1;
     }
 }
 
-// Renumber labels using a mapping table
-__global__ void renumberLabelsKernel(int *labels, int *labelMapping, int maxLabel, int n) {
+// Kernel to compact and sort points by label using prefix scan results
+// Points are written in order: all left partition points first, then all right partition points
+// Within each group, they maintain their relative order (stable)
+__global__ void compactSortedByLabelKernel(float *pxIn, float *pyIn, int *labelsIn,
+                                            int *goesLeft, int *goesRight,
+                                            int *leftScan, int *rightScan,
+                                            int leftTotal,
+                                            float *pxOut, float *pyOut, int *labelsOut,
+                                            int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    
+    int label = labelsIn[idx];
+    if (label < 0) return;  // Eliminated point
+    
+    int outIdx;
+    if (goesLeft[idx]) {
+        outIdx = leftScan[idx];
+    } else {
+        outIdx = leftTotal + rightScan[idx];
+    }
+    
+    pxOut[outIdx] = pxIn[idx];
+    pyOut[outIdx] = pyIn[idx];
+    labelsOut[outIdx] = label;
+}
+
+// After compaction, we need to renumber labels to be contiguous (0, 1, 2, ...)
+// and sort points within each old label group so left comes before right
+// This kernel computes the final contiguous label
+__global__ void renumberLabelsKernel(int *labels, int *labelMapping, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
     
     int oldLabel = labels[idx];
-    if (oldLabel >= 0 && oldLabel < maxLabel) {
-        labels[idx] = labelMapping[oldLabel];
-    }
+    labels[idx] = labelMapping[oldLabel];
 }
 
 
@@ -394,13 +419,7 @@ __global__ void renumberLabelsKernel(int *labels, int *labelMapping, int maxLabe
 void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
                           float leftX, float leftY, float rightX, float rightY,
                           std::vector<Point> &hullPoints) {
-    printf("\n========== gpuQuickHullOneSide START ==========\n");
-    printf("n=%d points, left=(%.3f, %.3f), right=(%.3f, %.3f)\n", n, leftX, leftY, rightX, rightY);
-    
-    if (n == 0) {
-        printf("No points, returning empty hull.\n");
-        return;
-    }
+    if (n == 0) return;
 
     // Allocate device memory
     float *d_px, *d_py;
@@ -442,24 +461,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaMemcpy(d_ansX, ansX.data(), ans.size() * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(d_ansY, ansY.data(), ans.size() * sizeof(float), cudaMemcpyHostToDevice);
 
-        printf("\n=== ITERATION START: currentN=%d, numLabels=%d, ans.size=%zu ===\n", currentN, numLabels, ans.size());
-        printf("ANS points:\n");
-        for (size_t i = 0; i < ans.size(); i++) {
-            printf("  ANS[%zu] = (%.3f, %.3f)\n", i, ans[i].x, ans[i].y);
-        }
-
-        // Debug: print current points and labels
-        std::vector<float> dbg_px(currentN), dbg_py(currentN);
-        std::vector<int> dbg_labels(currentN);
-        cudaMemcpy(dbg_px.data(), d_px, currentN * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(dbg_py.data(), d_py, currentN * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(dbg_labels.data(), d_labels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
-        printf("Current points (before distance computation):\n");
-        for (int i = 0; i < currentN && i < 50; i++) {
-            printf("  Point[%d] = (%.3f, %.3f), label=%d\n", i, dbg_px[i], dbg_py[i], dbg_labels[i]);
-        }
-        if (currentN > 50) printf("  ... (%d more points)\n", currentN - 50);
-
         int numBlocks = (currentN + BLOCK_SIZE - 1) / BLOCK_SIZE;
         
         // Compute distances for ALL points at once using labels
@@ -468,17 +469,23 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_px, d_py, d_labels,
             d_ansX, d_ansY, (int)ans.size(),
             d_distances, currentN);
+
+
+        // print points for debugging
+        cudaMemcpy(h_px, d_px, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_py, d_py, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+            printf("Point[%d] = (%.3f, %.3f)\n", i, h_px[i], h_py[i]);
+        }
+
+        // print computed distances for debugging
+        std::vector<float> h_distances(currentN);
+        cudaMemcpy(h_distances.data(), d_distances, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+            printf("Distance[%d] = %f\n", i, h_distances[i]);
+        }
             
         cudaDeviceSynchronize();
-
-        // Debug: print distances
-        std::vector<float> dbg_distances(currentN);
-        cudaMemcpy(dbg_distances.data(), d_distances, currentN * sizeof(float), cudaMemcpyDeviceToHost);
-        printf("Distances after computation:\n");
-        for (int i = 0; i < currentN && i < 50; i++) {
-            printf("  Distance[%d] = %.3f (label=%d)\n", i, dbg_distances[i], dbg_labels[i]);
-        }
-        if (currentN > 50) printf("  ... (%d more distances)\n", currentN - 50);
 
         // Find max distance point for each partition using CUB segmented reduce
         // This follows the paper's methodology: since points are sorted by label,
@@ -491,17 +498,13 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         segmentedMaxDistReduce(d_distances, d_labels, d_segmentOffsets, 
                                d_maxPerSegment, currentN, numLabels);
         
-        // Debug: print segment offsets
-        std::vector<int> dbg_offsets(numLabels + 1);
-        cudaMemcpy(dbg_offsets.data(), d_segmentOffsets, (numLabels + 1) * sizeof(int), cudaMemcpyDeviceToHost);
-        printf("Segment offsets:\n");
-        for (int i = 0; i <= numLabels; i++) {
-            printf("  offset[%d] = %d\n", i, dbg_offsets[i]);
-        }
-
         // Copy results back to host
         std::vector<DistIdxPair> h_maxPairs(numLabels);
         cudaMemcpy(h_maxPairs.data(), d_maxPerSegment, numLabels * sizeof(DistIdxPair), cudaMemcpyDeviceToHost);
+
+        for (int i = 0; i < numLabels; i++) {
+            printf("MaxDist[%d] = %f, MaxIdx[%d] = %d\n", i, h_maxPairs[i].dist, i, h_maxPairs[i].idx);
+        }
         
         // Extract max distances and indices
         std::vector<float> h_maxDist(numLabels);
@@ -509,7 +512,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         for (int i = 0; i < numLabels; i++) {
             h_maxDist[i] = h_maxPairs[i].dist;
             h_maxIdx[i] = h_maxPairs[i].idx;
-            printf("Max for label %d: dist=%.3f, idx=%d\n", i, h_maxDist[i], h_maxIdx[i]);
+            printf("Extracted MaxDist[%d] = %f, MaxIdx[%d] = %d\n", i, h_maxDist[i], i, h_maxIdx[i]);
         }
         
         // Check if any partition found a max point
@@ -517,14 +520,15 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         for (int i = 0; i < numLabels; i++) {
             if (h_maxIdx[i] >= 0 && h_maxDist[i] > 0) {
                 anyChanged = true;
+                printf("Partition %d changed: MaxDist = %f, MaxIdx = %d\n", i, h_maxDist[i], h_maxIdx[i]);
                 break;
             }
         }
         
         if (!anyChanged) {
-            printf("No partition changed, terminating loop.\n");
             cudaFree(d_segmentOffsets);
             cudaFree(d_maxPerSegment);
+            printf("No partitions changed, terminating.\n");
             break;
         }
         
@@ -537,11 +541,10 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaMalloc(&d_maxIdxPerLabel, numLabels * sizeof(int));
         cudaMemcpy(d_maxIdxPerLabel, h_maxIdx.data(), numLabels * sizeof(int), cudaMemcpyHostToDevice);
         
-        printf("Building newAns:\n");
         int newLabel = 0;
         for (int i = 0; i < numLabels; i++) {
             newAns.push_back(ans[i]);
-            printf("  newAns[%zu] = ans[%d] = (%.3f, %.3f)\n", newAns.size()-1, i, ans[i].x, ans[i].y);
+            printf("Adding ANS point (%.3f, %.3f) from old label %d\n", ans[i].x, ans[i].y, i);
             labelMapping[i] = newLabel;
             
             if (h_maxIdx[i] >= 0 && h_maxDist[i] > 0) {
@@ -550,16 +553,13 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
                 cudaMemcpy(&maxPx, d_px + h_maxIdx[i], sizeof(float), cudaMemcpyDeviceToHost);
                 cudaMemcpy(&maxPy, d_py + h_maxIdx[i], sizeof(float), cudaMemcpyDeviceToHost);
                 newAns.push_back({maxPx, maxPy});
-                printf("  newAns[%zu] = MAX POINT from partition %d: (%.3f, %.3f)\n", newAns.size()-1, i, maxPx, maxPy);
-                printf("    -> sparse labels for this partition: %d (left), %d (right)\n", 2*i, 2*i+1);
+                printf("Inserting max point (index = %d) (%.3f, %.3f) for partition %d\n", h_maxIdx[i], maxPx, maxPy, i);
                 newLabel += 2;  // Two new partitions
             } else {
-                printf("  Partition %d did NOT split (no valid max)\n", i);
                 newLabel += 1;  // Partition stays but gets renumbered
             }
         }
         newAns.push_back(ans.back());
-        printf("  newAns[%zu] = ans.back() = (%.3f, %.3f)\n", newAns.size()-1, ans.back().x, ans.back().y);
         
         // Update labels on device
         int *d_newLabels;
@@ -571,57 +571,65 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_newLabels, numLabels, currentN);
         cudaDeviceSynchronize();
         
-        // Debug: print new labels after updateLabelsKernel
-        std::vector<int> dbg_newLabels(currentN);
-        cudaMemcpy(dbg_newLabels.data(), d_newLabels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
-        printf("After updateLabelsKernel (sparse labels, -1 = eliminated):\n");
-        for (int i = 0; i < currentN && i < 50; i++) {
-            printf("  Point[%d] (%.3f, %.3f): oldLabel=%d -> newLabel=%d\n", 
-                   i, dbg_px[i], dbg_py[i], dbg_labels[i], dbg_newLabels[i]);
-        }
-        if (currentN > 50) printf("  ... (%d more points)\n", currentN - 50);
-        
         cudaFree(d_segmentOffsets);
         cudaFree(d_maxPerSegment);
         cudaFree(d_maxIdxPerLabel);
         
         // =====================================================================
-        // Compact points: remove eliminated (label == -1)
-        // Then renumber labels to be contiguous based on surviving points
+        // Compact and sort points by label using prefix scans
+        // This maintains the invariant that points are sorted by label
         // =====================================================================
+
+        // points before sorting:
+        cudaMemcpy(h_px, d_px, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_py, d_py, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        std::vector<int> h_newLabels(currentN);
+        cudaMemcpy(h_newLabels.data(), d_newLabels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+            printf("Before compaction: Point[%d] = (%.3f, %.3f), NewLabel = %d\n", i, h_px[i], h_py[i], h_newLabels[i]);
+        }
         
         // Allocate arrays for compaction
-        int *d_survives;
-        int *d_scanResult;
+        int *d_goesLeft, *d_goesRight;
+        int *d_leftScan, *d_rightScan;
         float *d_pxNew, *d_pyNew;
         int *d_labelsNew;
         
-        cudaMalloc(&d_survives, currentN * sizeof(int));
-        cudaMalloc(&d_scanResult, currentN * sizeof(int));
+        cudaMalloc(&d_goesLeft, currentN * sizeof(int));
+        cudaMalloc(&d_goesRight, currentN * sizeof(int));
+        cudaMalloc(&d_leftScan, currentN * sizeof(int));
+        cudaMalloc(&d_rightScan, currentN * sizeof(int));
         cudaMalloc(&d_pxNew, currentN * sizeof(float));
         cudaMalloc(&d_pyNew, currentN * sizeof(float));
         cudaMalloc(&d_labelsNew, currentN * sizeof(int));
         
-        // Create survive flags (1 if label >= 0)
-        createSurviveFlagsKernel<<<numBlocks, BLOCK_SIZE>>>(d_newLabels, d_survives, currentN);
+        // Classify points: left (even label), right (odd label), or eliminated (-1)
+        classifyForCompactionKernel<<<numBlocks, BLOCK_SIZE>>>(
+            d_newLabels, d_goesLeft, d_goesRight, currentN);
         cudaDeviceSynchronize();
         
-        // Prefix sum for compaction
-        cubExclusiveScanInt(d_survives, d_scanResult, currentN);
+        // Prefix sums for compaction
+        cubExclusiveScanInt(d_goesLeft, d_leftScan, currentN);
+        cubExclusiveScanInt(d_goesRight, d_rightScan, currentN);
         
-        // Get total count of surviving points
-        int lastSurvive, lastScan;
-        cudaMemcpy(&lastSurvive, d_survives + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(&lastScan, d_scanResult + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
-        int newN = lastScan + lastSurvive;
+        // Get total counts
+        int leftTotal, rightTotal;
+        int lastLeft, lastRight;
+        cudaMemcpy(&leftTotal, d_leftScan + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&lastLeft, d_goesLeft + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        leftTotal += lastLeft;
+        cudaMemcpy(&rightTotal, d_rightScan + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&lastRight, d_goesRight + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        rightTotal += lastRight;
         
-        printf("Compaction: %d points -> %d surviving points\n", currentN, newN);
+        int newN = leftTotal + rightTotal;
         
         if (newN == 0) {
-            printf("All points eliminated, terminating loop.\n");
             cudaFree(d_newLabels);
-            cudaFree(d_survives);
-            cudaFree(d_scanResult);
+            cudaFree(d_goesLeft);
+            cudaFree(d_goesRight);
+            cudaFree(d_leftScan);
+            cudaFree(d_rightScan);
             cudaFree(d_pxNew);
             cudaFree(d_pyNew);
             cudaFree(d_labelsNew);
@@ -629,169 +637,51 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             break;
         }
         
-        // Compact points (remove eliminated ones, keep sparse labels for now)
-        compactKernel<<<numBlocks, BLOCK_SIZE>>>(
+        // Compact points, putting left partition points first, then right
+        // This maintains sorted order by label since:
+        // - Points with even labels (left partitions) come first
+        // - Points with odd labels (right partitions) come after
+        // - Within each group, relative order is preserved (stable)
+        compactSortedByLabelKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_px, d_py, d_newLabels,
-            d_scanResult,
+            d_goesLeft, d_goesRight,
+            d_leftScan, d_rightScan, leftTotal,
             d_pxNew, d_pyNew, d_labelsNew,
             currentN);
         cudaDeviceSynchronize();
         
-        cudaFree(d_survives);
-        cudaFree(d_scanResult);
-        
-        // ====================================================================
-        // CRITICAL: Sort points by label to maintain label-sorted invariant!
-        // Without this, segmented reduce produces garbage results.
-        // ====================================================================
-        
-        // We need to sort (pxNew, pyNew) by labelsNew as the key
-        // CUB doesn't directly support sorting 3 arrays together, so we use
-        // a two-step approach: sort indices by label, then gather
-        
-        // Allocate temp arrays for sorted output
-        float *d_pxSorted, *d_pySorted;
-        int *d_labelsSorted;
-        cudaMalloc(&d_pxSorted, newN * sizeof(float));
-        cudaMalloc(&d_pySorted, newN * sizeof(float));
-        cudaMalloc(&d_labelsSorted, newN * sizeof(int));
-        
-        // Create indices array
-        int *d_indices, *d_indicesSorted;
-        cudaMalloc(&d_indices, newN * sizeof(int));
-        cudaMalloc(&d_indicesSorted, newN * sizeof(int));
-        
-        // Initialize indices to 0, 1, 2, ...
-        int sortBlocks = (newN + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        // Use a simple kernel to initialize indices
-        {
-            std::vector<int> h_indices(newN);
-            for (int i = 0; i < newN; i++) h_indices[i] = i;
-            cudaMemcpy(d_indices, h_indices.data(), newN * sizeof(int), cudaMemcpyHostToDevice);
-        }
-        
-        // Determine temporary storage for sorting
-        void *d_temp_sort = nullptr;
-        size_t temp_sort_bytes = 0;
-        cub::DeviceRadixSort::SortPairs(d_temp_sort, temp_sort_bytes,
-            d_labelsNew, d_labelsSorted, d_indices, d_indicesSorted, newN);
-        cudaMalloc(&d_temp_sort, temp_sort_bytes);
-        
-        // Sort pairs: (labels -> sorted_labels, indices -> sorted_indices)
-        cub::DeviceRadixSort::SortPairs(d_temp_sort, temp_sort_bytes,
-            d_labelsNew, d_labelsSorted, d_indices, d_indicesSorted, newN);
-        cudaDeviceSynchronize();
-        
-        cudaFree(d_temp_sort);
-        cudaFree(d_indices);
-        
-        // Now gather px, py using sorted indices - do on CPU for simplicity
-        {
-            std::vector<float> h_pxNew(newN), h_pyNew(newN);
-            std::vector<int> h_sortedIndices(newN);
-            cudaMemcpy(h_pxNew.data(), d_pxNew, newN * sizeof(float), cudaMemcpyDeviceToHost);
-            cudaMemcpy(h_pyNew.data(), d_pyNew, newN * sizeof(float), cudaMemcpyDeviceToHost);
-            cudaMemcpy(h_sortedIndices.data(), d_indicesSorted, newN * sizeof(int), cudaMemcpyDeviceToHost);
-            
-            std::vector<float> h_pxSorted(newN), h_pySorted(newN);
-            for (int i = 0; i < newN; i++) {
-                h_pxSorted[i] = h_pxNew[h_sortedIndices[i]];
-                h_pySorted[i] = h_pyNew[h_sortedIndices[i]];
-            }
-            
-            cudaMemcpy(d_pxSorted, h_pxSorted.data(), newN * sizeof(float), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_pySorted, h_pySorted.data(), newN * sizeof(float), cudaMemcpyHostToDevice);
-        }
-        
-        cudaFree(d_indicesSorted);
-        
-        // Copy sorted data back to New arrays (or just use sorted arrays directly)
-        cudaMemcpy(d_pxNew, d_pxSorted, newN * sizeof(float), cudaMemcpyDeviceToDevice);
-        cudaMemcpy(d_pyNew, d_pySorted, newN * sizeof(float), cudaMemcpyDeviceToDevice);
-        cudaMemcpy(d_labelsNew, d_labelsSorted, newN * sizeof(int), cudaMemcpyDeviceToDevice);
-        
-        cudaFree(d_pxSorted);
-        cudaFree(d_pySorted);
-        cudaFree(d_labelsSorted);
-        
-        printf("Sorted points by label.\n");
-        
-        // Copy compacted labels to host to build proper label mapping
-        std::vector<int> h_compactedLabels(newN);
-        cudaMemcpy(h_compactedLabels.data(), d_labelsNew, newN * sizeof(int), cudaMemcpyDeviceToHost);
-        
-        // Debug: print compacted points with sparse labels
-        std::vector<float> dbg_pxNew(newN), dbg_pyNew(newN);
-        cudaMemcpy(dbg_pxNew.data(), d_pxNew, newN * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(dbg_pyNew.data(), d_pyNew, newN * sizeof(float), cudaMemcpyDeviceToHost);
-        printf("After compaction (sparse labels):\n");
-        for (int i = 0; i < newN && i < 50; i++) {
-            printf("  Point[%d] = (%.3f, %.3f), sparseLabel=%d\n", i, dbg_pxNew[i], dbg_pyNew[i], h_compactedLabels[i]);
-        }
-        if (newN > 50) printf("  ... (%d more points)\n", newN - 50);
-        
-        // Find which sparse labels actually have points
-        int maxSparseLabel = 2 * numLabels;
-        std::vector<bool> labelExists(maxSparseLabel, false);
-        for (int i = 0; i < newN; i++) {
-            if (h_compactedLabels[i] >= 0 && h_compactedLabels[i] < maxSparseLabel) {
-                labelExists[h_compactedLabels[i]] = true;
-            }
-        }
-        
-        printf("Sparse labels that exist: ");
-        for (int i = 0; i < maxSparseLabel; i++) {
-            if (labelExists[i]) printf("%d ", i);
-        }
-        printf("\n");
-        
-        // Build mapping from sparse labels to contiguous labels
-        // AND build the new ANS to match
+        // Now we need to renumber labels to be contiguous (0, 1, 2, ...)
+        // Build label mapping: sparse label -> contiguous label
+        // For the new ANS, partition i corresponds to label i
+        // labelMapping maps the sparse label (2*oldLabel or 2*oldLabel+1) to new contiguous label
+        int maxSparseLabel = 2 * numLabels;  // Upper bound on sparse labels
         std::vector<int> h_labelMapping(maxSparseLabel, -1);
-        std::vector<Point> finalNewAns;
-        finalNewAns.push_back(newAns[0]);  // First point (leftPt)
-        printf("Building finalNewAns and label mapping:\n");
-        printf("  finalNewAns[0] = (%.3f, %.3f) [leftPt]\n", newAns[0].x, newAns[0].y);
-        
         int contiguousLabel = 0;
-        for (int sparseLabel = 0; sparseLabel < maxSparseLabel; sparseLabel++) {
-            if (labelExists[sparseLabel]) {
-                h_labelMapping[sparseLabel] = contiguousLabel;
-                printf("  sparseLabel %d -> contiguousLabel %d\n", sparseLabel, contiguousLabel);
-                // Find the corresponding ANS point for this sparse label
-                // Sparse label i corresponds to ANS[i] -> ANS[i+1] edge
-                // We need to add ANS[sparseLabel + 1] to finalNewAns
-                if (sparseLabel + 1 < (int)newAns.size()) {
-                    finalNewAns.push_back(newAns[sparseLabel + 1]);
-                    printf("  finalNewAns[%zu] = newAns[%d] = (%.3f, %.3f)\n", 
-                           finalNewAns.size()-1, sparseLabel + 1, newAns[sparseLabel + 1].x, newAns[sparseLabel + 1].y);
-                }
-                contiguousLabel++;
+        for (int i = 0; i < numLabels; i++) {
+            if (h_maxIdx[i] >= 0 && h_maxDist[i] > 0) {
+                // This partition split into two
+                h_labelMapping[2 * i] = contiguousLabel++;      // Left sub-partition
+                h_labelMapping[2 * i + 1] = contiguousLabel++;  // Right sub-partition
             }
-        }
-        
-        printf("Final ANS for next iteration (%zu points):\n", finalNewAns.size());
-        for (size_t i = 0; i < finalNewAns.size(); i++) {
-            printf("  finalNewAns[%zu] = (%.3f, %.3f)\n", i, finalNewAns[i].x, finalNewAns[i].y);
+            // If partition didn't split, no points remain in it
         }
         
         // Copy label mapping to device and renumber
         int *d_labelMapping;
         cudaMalloc(&d_labelMapping, maxSparseLabel * sizeof(int));
         cudaMemcpy(d_labelMapping, h_labelMapping.data(), maxSparseLabel * sizeof(int), cudaMemcpyHostToDevice);
+
+        // points after compaction:
+        cudaMemcpy(h_px, d_pxNew, newN * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_py, d_pyNew, newN * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_newLabels.data(), d_labelsNew, newN * sizeof(int), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < newN; i++) {
+            printf("After compaction: Point[%d] = (%.3f, %.3f), NewLabel = %d\n", i, h_px[i], h_py[i], h_newLabels[i]);
+        }
         
         int newNumBlocks = (newN + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        renumberLabelsKernel<<<newNumBlocks, BLOCK_SIZE>>>(d_labelsNew, d_labelMapping, maxSparseLabel, newN);
+        renumberLabelsKernel<<<newNumBlocks, BLOCK_SIZE>>>(d_labelsNew, d_labelMapping, newN);
         cudaDeviceSynchronize();
-        
-        // Debug: print final renumbered labels
-        std::vector<int> dbg_finalLabels(newN);
-        cudaMemcpy(dbg_finalLabels.data(), d_labelsNew, newN * sizeof(int), cudaMemcpyDeviceToHost);
-        printf("After renumbering (contiguous labels):\n");
-        for (int i = 0; i < newN && i < 50; i++) {
-            printf("  Point[%d] = (%.3f, %.3f), finalLabel=%d\n", i, dbg_pxNew[i], dbg_pyNew[i], dbg_finalLabels[i]);
-        }
-        if (newN > 50) printf("  ... (%d more points)\n", newN - 50);
         
         cudaFree(d_labelMapping);
         
@@ -802,21 +692,19 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         
         // Cleanup temp arrays
         cudaFree(d_newLabels);
+        cudaFree(d_goesLeft);
+        cudaFree(d_goesRight);
+        cudaFree(d_leftScan);
+        cudaFree(d_rightScan);
         cudaFree(d_pxNew);
         cudaFree(d_pyNew);
         cudaFree(d_labelsNew);
         
         currentN = newN;
-        ans = finalNewAns;
+        ans = newAns;
         numLabels = contiguousLabel;
-        
-        printf("=== ITERATION END: currentN=%d, numLabels=%d ===\n\n", currentN, numLabels);
-    }
 
-    printf("=== LOOP TERMINATED ===\n");
-    printf("Final ANS (%zu points):\n", ans.size());
-    for (size_t i = 0; i < ans.size(); i++) {
-        printf("  ans[%zu] = (%.3f, %.3f)\n", i, ans[i].x, ans[i].y);
+        printf("Iteration complete: currentN = %d, numLabels = %d, ans size = %zu\n", currentN, numLabels, ans.size());
     }
 
     // Cleanup
@@ -828,12 +716,9 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     cudaFree(d_ansY);
 
     // Return hull points (excluding endpoints which are added by caller)
-    printf("Returning hull points (excluding endpoints):\n");
     for (size_t i = 1; i < ans.size() - 1; i++) {
         hullPoints.push_back(ans[i]);
-        printf("  hullPoints[%zu] = (%.3f, %.3f)\n", hullPoints.size()-1, ans[i].x, ans[i].y);
     }
-    printf("========== gpuQuickHullOneSide END ==========\n\n");
 }
 
 
@@ -842,9 +727,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
 // ============================================================================
 extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
                               float *result_x, float *result_y, int *M) {
-    printf("\n############### gpuQuickHull START ###############\n");
-    printf("Total input points: %d\n", n);
-    
     if (n <= 2) {
         for (int i = 0; i < n; i++) {
             result_x[i] = h_px[i];
@@ -870,8 +752,9 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
 
     Point minPt = {h_min.x, h_min.y};
     Point maxPt = {h_max.x, h_max.y};
-    
-    printf("Min point: (%.3f, %.3f), Max point: (%.3f, %.3f)\n", minPt.x, minPt.y, maxPt.x, maxPt.y);
+
+    printf("Min Point: (%.3f, %.3f), Max Point: (%.3f, %.3f)\n",
+           minPt.x, minPt.y, maxPt.x, maxPt.y);
 
     // Partition points into upper (above MIN->MAX line) and lower (below)
     std::vector<float> upperX, upperY, lowerX, lowerY;
@@ -895,26 +778,42 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         }
         // d == 0: point is on the line, skip (collinear with endpoints)
     }
-    
-    printf("Partitioned: %zu upper points, %zu lower points\n", upperX.size(), lowerX.size());
+
+    printf("Upper hull points: \n");
+    for (size_t i = 0; i < upperX.size(); i++) {
+        printf("(%.3f, %.3f)\n", upperX[i], upperY[i]);
+    }
+    printf("Lower hull points: \n");
+    for (size_t i = 0; i < lowerX.size(); i++) {
+        printf("(%.3f, %.3f)\n", lowerX[i], lowerY[i]);
+    }
+    printf("\n");
 
     // Find upper hull (points above MIN->MAX, going from MIN to MAX)
-    printf("\n--- Processing UPPER hull ---\n");
     std::vector<Point> upperHull;
     if (!upperX.empty()) {
         gpuQuickHullOneSide(upperX.data(), upperY.data(), upperX.size(),
                             minPt.x, minPt.y, maxPt.x, maxPt.y, upperHull);
     }
-    printf("Upper hull has %zu points (excluding endpoints)\n", upperHull.size());
+
+    printf("Upper hull points after QuickHull:\n");
+    for (const auto &p : upperHull) {
+        printf("(%.3f, %.3f)\n", p.x, p.y);
+    }
+    printf("\n");
 
     // Find lower hull (points below MIN->MAX, going from MAX to MIN)
-    printf("\n--- Processing LOWER hull ---\n");
     std::vector<Point> lowerHull;
     if (!lowerX.empty()) {
         gpuQuickHullOneSide(lowerX.data(), lowerY.data(), lowerX.size(),
                             maxPt.x, maxPt.y, minPt.x, minPt.y, lowerHull);
     }
-    printf("Lower hull has %zu points (excluding endpoints)\n", lowerHull.size());
+
+    printf("Lower hull points after QuickHull:\n");
+    for (const auto &p : lowerHull) {
+        printf("(%.3f, %.3f)\n", p.x, p.y);
+    }
+    printf("\n");
 
     // Combine: MIN -> upper hull -> MAX -> lower hull -> back to MIN
     std::vector<Point> hull;
@@ -926,11 +825,6 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     for (auto &p : lowerHull) {
         hull.push_back(p);
     }
-    
-    printf("\n--- Final combined hull ---\n");
-    for (size_t i = 0; i < hull.size(); i++) {
-        printf("hull[%zu] = (%.3f, %.3f)\n", i, hull[i].x, hull[i].y);
-    }
 
     // Output
     *M = hull.size();
@@ -938,6 +832,4 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         result_x[i] = hull[i].x;
         result_y[i] = hull[i].y;
     }
-    
-    printf("############### gpuQuickHull END ###############\n\n");
 }
