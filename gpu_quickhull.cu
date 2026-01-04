@@ -563,19 +563,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         int newN = lastScatter + lastKeep;
         printf("NewN = %d\n", newN);
         
-        // Get max points per segment to update ANS
-        std::vector<DistIdxPair> h_maxPerSegment(numLabels);
-        cudaMemcpy(h_maxPerSegment.data(), d_maxPerSegment, numLabels * sizeof(DistIdxPair), cudaMemcpyDeviceToHost);
-
-        // print maxPerSegment for debugging
-        for (int i = 0; i < numLabels; i++) {
-            printf("MaxPerSegment[%d] = (dist: %f, idx: %d)\n", i, h_maxPerSegment[i].dist, h_maxPerSegment[i].idx);
-        }
-        
         // Count how many new hull points were found
-        std::vector<int> h_state(numLabels);
-        cudaMemcpy(h_state.data(), d_state, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
-
         int numNewHullPoints = 0;
         for (int i = 0; i < numLabels; i++) {
             if (h_state[i] == 1) {
