@@ -180,7 +180,7 @@ void segmentedMaxDistReduce(
     cudaDeviceSynchronize();
 
     // copy back to host
-    float h_offsets[numSegments + 1];
+    int h_offsets[numSegments + 1];
     cudaMemcpy(h_offsets, d_segmentOffsets, (numSegments + 1) * sizeof(int), cudaMemcpyDeviceToHost);
     // fill in any unset offsets
     for (int i = numSegments-1; i >= 1; i--) {
@@ -338,12 +338,13 @@ __global__ void determineSide(float *px, float *py, int *labels,
     float curX = px[idx];
     float curY = py[idx];
     
-    // Distance from L->M line
+    // Distance from L->M line (positive = left of line)
     float distLM = (mx - lx) * (curY - ly) - (my - ly) * (curX - lx);
-    // Distance from M->R line  
+    // Distance from M->R line (positive = left of line)
     float distMR = (rx - mx) * (curY - my) - (ry - my) * (curX - mx);
     
-    // New label: 2*label for left partition (L->M), 2*label+1 for right partition (M->R)
+    // Points on the LEFT of L->M go to the left partition (label stays same)
+    // Points on the LEFT of M->R go to the right partition (label increases by 1)
     if (distLM > 0) {
         goesLeft[idx] = 1;
         goesRight[idx] = 0;
