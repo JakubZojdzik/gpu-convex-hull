@@ -547,8 +547,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaMemcpy(h_goesRight.data(), d_goesRight, currentN * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_newLabels.data(), d_newLabels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
         for (int i = 0; i < currentN; i++) {
-           // printf("GoesLeft[%d] = %d, GoesRight[%d] = %d, NewLabel[%d] = %d\n", 
-                   i, h_goesLeft[i], i, h_goesRight[i], i, h_newLabels[i]);
+           // printf("GoesLeft[%d] = %d, GoesRight[%d] = %d, NewLabel[%d] = %d\n", i, h_goesLeft[i], i, h_goesRight[i], i, h_newLabels[i]);
         }
         
         // Compute scatter indices using exclusive scan on keepFlags
@@ -612,12 +611,12 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         // Add the final endpoint
         newAns.push_back(ans[numLabels]);
         // print new ANS for debugging
-       // printf("New ANS points:\n");
+        // printf("New ANS points:\n");
         for (size_t i = 0; i < newAns.size(); i++) {
            // printf("ANS[%zu] = (%.3f, %.3f)\n", i, newAns[i].x, newAns[i].y);
         }
         ans = newAns;
-       // printf("Updated ANS size: %zu\n", ans.size());
+        // printf("Updated ANS size: %zu\n", ans.size());
         
         // If no points survive, we're done
         if (newN == 0) {
@@ -735,8 +734,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     Point minPt = {h_min.x, h_min.y};
     Point maxPt = {h_max.x, h_max.y};
 
-   // printf("Min Point: (%.3f, %.3f), Max Point: (%.3f, %.3f)\n",
-           minPt.x, minPt.y, maxPt.x, maxPt.y);
+    // printf("Min Point: (%.3f, %.3f), Max Point: (%.3f, %.3f)\n", minPt.x, minPt.y, maxPt.x, maxPt.y);
 
     // Partition points into upper (above MIN->MAX line) and lower (below)
     std::vector<float> upperX, upperY, lowerX, lowerY;
@@ -761,15 +759,15 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         // d == 0: point is on the line, skip (collinear with endpoints)
     }
 
-   // printf("Upper hull points: \n");
+    // printf("Upper hull points: \n");
     for (size_t i = 0; i < upperX.size(); i++) {
-       // printf("(%.3f, %.3f)\n", upperX[i], upperY[i]);
+        // printf("(%.3f, %.3f)\n", upperX[i], upperY[i]);
     }
-   // printf("Lower hull points: \n");
+    // printf("Lower hull points: \n");
     for (size_t i = 0; i < lowerX.size(); i++) {
-       // printf("(%.3f, %.3f)\n", lowerX[i], lowerY[i]);
+        // printf("(%.3f, %.3f)\n", lowerX[i], lowerY[i]);
     }
-   // printf("\n");
+    // printf("\n");
 
     // Find upper hull (points above MIN->MAX, going from MIN to MAX)
     std::vector<Point> upperHull;
@@ -778,11 +776,11 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
                             minPt.x, minPt.y, maxPt.x, maxPt.y, upperHull);
     }
 
-   // printf("Upper hull points after QuickHull:\n");
+    // printf("Upper hull points after QuickHull:\n");
     for (const auto &p : upperHull) {
-       // printf("(%.3f, %.3f)\n", p.x, p.y);
+        // printf("(%.3f, %.3f)\n", p.x, p.y);
     }
-   // printf("\n");
+    // printf("\n");
 
     // Find lower hull (points below MIN->MAX, going from MAX to MIN)
     std::vector<Point> lowerHull;
@@ -791,11 +789,11 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
                             maxPt.x, maxPt.y, minPt.x, minPt.y, lowerHull);
     }
 
-   // printf("Lower hull points after QuickHull:\n");
+    // printf("Lower hull points after QuickHull:\n");
     for (const auto &p : lowerHull) {
-       // printf("(%.3f, %.3f)\n", p.x, p.y);
+        // printf("(%.3f, %.3f)\n", p.x, p.y);
     }
-   // printf("\n");
+    // printf("\n");
 
     // Combine: MIN -> upper hull -> MAX -> lower hull -> back to MIN
     std::vector<Point> hull;
