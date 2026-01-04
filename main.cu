@@ -48,59 +48,40 @@ static int countUniquePoints(const float *x,
 
 int main()
 {
-    int N = 30;
+    // int N = 30;
 
-    float *px = (float*) malloc(sizeof(float) * N);
-    float *py = (float*) malloc(sizeof(float) * N);
+    // float *px = (float*) malloc(sizeof(float) * N);
+    // float *py = (float*) malloc(sizeof(float) * N);
 
-    srand(time(NULL));
+    // srand(time(NULL));
 
-    int points = 0;
-    float radius = 10000.0f;
-    while (points < N) {
-        float x = radius * 2.0f * (rand() / (float)RAND_MAX) - radius;
-        float y = radius * 2.0f * (rand() / (float)RAND_MAX) - radius;
-        if (x*x + y*y <= radius*radius) {
-            px[points] = x;
-            py[points] = y;
-            points++;
-        }
-    }
+    // int points = 0;
+    // float radius = 10000.0f;
+    // while (points < N) {
+    //     float x = radius * 2.0f * (rand() / (float)RAND_MAX) - radius;
+    //     float y = radius * 2.0f * (rand() / (float)RAND_MAX) - radius;
+    //     if (x*x + y*y <= radius*radius) {
+    //         px[points] = x;
+    //         py[points] = y;
+    //         points++;
+    //     }
+    // }
 
-    // min:
-        // (-6789.278, 6702.553)    true positive
-    // upper hull:
-        // (-3202.690, 9255.053)    true positive
-        // (3004.084, 7419.375)     true positive
-        // (3757.629, 6149.915)
-        // (660.616, 7820.965)
-        // (1278.297, 5766.052)
-    // lower hull:
-        // (-1606.287, -2262.690)   true positive
-        // (5502.341, -1996.346)    true positive
-        // (6219.344, -611.857)     true positive
-        // (2519.980, 4663.176)
-        // (5122.345, 3457.333)
-        // (2577.598, 4789.114)
-        // (1792.777, 4693.940)
-        // (3621.583, -98.430)      false positive
-        // (5861.843, 966.890)      false positive
-    // max:
-        // (6903.475, 4420.772)     true positive
+    // input points:
+    // [(-1969.974, -1878.602), (6639.611, 3964.737), (-6958.796, -3810.514), (-8324.410, 5001.560), (-2231.808, -5202.035), (4247.948, 7545.807), (-5523.360, -5380.975), (3681.671, 2068.901), (215.590, -6637.663), (6954.273, 4176.332), (5017.493, 5097.175), (-4094.568, -752.103)]
 
-    // int N = 16;
-    // float *px = new float[N]{
-    //     5861.843f, 3757.629f, 5502.341f, -6789.278f,
-    //     2519.980f, 5122.345f, 2577.598f, 1792.777f,
-    //     3621.583f, 660.616f, 1278.297f, 6219.344f,
-    //     -1606.287f, 3004.084f, 6903.475f, -3202.690f
-    // };
-    // float *py = new float[N]{
-    //     966.890f, 6149.915f, -1996.346f, 6702.553f,
-    //     4663.176f, 3457.333f, 4789.114f, 4693.940f,
-    //     -98.430f, 7820.965f, 5766.052f, -611.857f,
-    //     -2262.690f, 7419.375f, 4420.772f, 9255.053f
-    // };
+
+    int N = 12;
+    float *px = new float[N]{
+        -1969.974f, 6639.611f, -6958.796f, -8324.410f,
+        -2231.808f, 4247.948f, -5523.360f, 3681.671f,
+        215.590f, 6954.273f, 5017.493f, -4094.568f
+    };
+    float *py = new float[N]{
+        -1878.602f, 3964.737f, -3810.514f, 5001.560f,
+        -5202.035f, 7545.807f, -5380.975f, 2068.901f,
+        -6637.663f, 4176.332f, 5097.175f, -752.103f
+    };
 
     printf("Input Points:\n");
     printf("[");
