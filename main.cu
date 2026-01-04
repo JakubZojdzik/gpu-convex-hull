@@ -48,40 +48,40 @@ static int countUniquePoints(const float *x,
 
 int main()
 {
-    // int N = 30;
+    int N = 24;
 
-    // float *px = (float*) malloc(sizeof(float) * N);
-    // float *py = (float*) malloc(sizeof(float) * N);
+    float *px = (float*) malloc(sizeof(float) * N);
+    float *py = (float*) malloc(sizeof(float) * N);
 
-    // srand(time(NULL));
+    srand(time(NULL));
 
-    // int points = 0;
-    // float radius = 10000.0f;
-    // while (points < N) {
-    //     float x = radius * 2.0f * (rand() / (float)RAND_MAX) - radius;
-    //     float y = radius * 2.0f * (rand() / (float)RAND_MAX) - radius;
-    //     if (x*x + y*y <= radius*radius) {
-    //         px[points] = x;
-    //         py[points] = y;
-    //         points++;
-    //     }
-    // }
+    int points = 0;
+    float radius = 100.0f;
+    while (points < N) {
+        float x = radius * 2.0f * (rand() / (float)RAND_MAX) - radius;
+        float y = radius * 2.0f * (rand() / (float)RAND_MAX) - radius;
+        if (x*x + y*y <= radius*radius) {
+            px[points] = x;
+            py[points] = y;
+            points++;
+        }
+    }
 
     // input points:
     // [(-4784.123, 6416.947), (-7254.780, 390.430), (1759.670, -9330.546), (-1073.548, 944.183), (-5673.735, -1845.406), (8004.467, -1873.345), (2795.154, 1064.468), (-5812.456, 6804.494), (8167.760, 30.967), (-2368.432, -4627.420), (1811.053, -443.390), (-251.239, -5228.379)]
 
 
-    int N = 12;
-    float *px = new float[N]{
-        -4784.123f,  -7254.780f,  1759.670f,  -1073.548f,
-        -5673.735f,  8004.467f,   2795.154f,  -5812.456f,
-        8167.760f,   -2368.432f,  1811.053f,  -251.239f
-    };
-    float *py = new float[N]{
-        6416.947f,   390.430f,    -9330.546f, 944.183f,
-        -1845.406f,  -1873.345f,  1064.468f,  6804.494f,
-        30.967f,     -4627.420f,  -443.390f,  -5228.379f
-    };
+    // int N = 12;
+    // float *px = new float[N]{
+    //     -4784.123f,  -7254.780f,  1759.670f,  -1073.548f,
+    //     -5673.735f,  8004.467f,   2795.154f,  -5812.456f,
+    //     8167.760f,   -2368.432f,  1811.053f,  -251.239f
+    // };
+    // float *py = new float[N]{
+    //     6416.947f,   390.430f,    -9330.546f, 944.183f,
+    //     -1845.406f,  -1873.345f,  1064.468f,  6804.494f,
+    //     30.967f,     -4627.420f,  -443.390f,  -5228.379f
+    // };
 
     printf("Input Points:\n");
     printf("[");
