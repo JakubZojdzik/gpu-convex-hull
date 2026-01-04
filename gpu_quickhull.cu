@@ -539,11 +539,14 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_newLabels, d_keepFlags, currentN);
         cudaDeviceSynchronize();
         
-        // print keepFlags for debugging
-        std::vector<int> h_keepFlags(currentN);
-        cudaMemcpy(h_keepFlags.data(), d_keepFlags, currentN * sizeof(int), cudaMemcpyDeviceToHost);
+        // print goes left, goes right and new labels for debugging
+        std::vector<int> h_goesLeft(currentN), h_goesRight(currentN), h_newLabels(currentN);
+        cudaMemcpy(h_goesLeft.data(), d_goesLeft, currentN * sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_goesRight.data(), d_goesRight, currentN * sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_newLabels.data(), d_newLabels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
         for (int i = 0; i < currentN; i++) {
-            printf("KeepFlags[%d] = %d\n", i, h_keepFlags[i]);
+            printf("GoesLeft[%d] = %d, GoesRight[%d] = %d, NewLabel[%d] = %d\n", 
+                   i, h_goesLeft[i], i, h_goesRight[i], i, h_newLabels[i]);
         }
         
         // Compute scatter indices using exclusive scan on keepFlags
