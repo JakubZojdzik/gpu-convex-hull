@@ -465,6 +465,13 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         for (int i = 0; i < currentN; i++) {
             printf("Distance[%d] = %f\n", i, h_distances[i]);
         }
+
+        // print labels for debugging
+        std::vector<int> h_labels(currentN);
+        cudaMemcpy(h_labels.data(), d_labels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+            printf("Label[%d] = %d\n", i, h_labels[i]);
+        }
             
         cudaDeviceSynchronize();
 
@@ -479,6 +486,14 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         
         segmentedMaxDistReduce(d_distances, d_labels, d_segmentOffsets, 
                                d_maxPerSegment, currentN, numLabels);
+        cudaDeviceSynchronize();
+        
+        // print max per segment for debugging
+        std::vector<DistIdxPair> h_maxPerSegment(numLabels);
+        cudaMemcpy(h_maxPerSegment.data(), d_maxPerSegment, numLabels * sizeof(DistIdxPair), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < numLabels; i++) {
+            printf("MaxPerSegment[%d] = (dist: %f, idx: %d)\n", i, h_maxPerSegment[i].dist, h_maxPerSegment[i].idx);
+        }
 
 
         // determine where do points go (left/right of max point) and partition state
@@ -491,10 +506,25 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         determineSide<<<numBlocks, BLOCK_SIZE>>>(d_px, d_py, d_labels, d_ansX, d_ansY, d_state, d_maxPerSegment, d_goesLeft, d_goesRight, currentN);
         cudaDeviceSynchronize();
 
+        // print state for debugging
+        std::vector<int> h_state(numLabels);
+        cudaMemcpy(h_state.data(), d_state, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < numLabels; i++) {
+            printf("State[%d] = %d\n", i, h_state[i]);
+        }
+
         // count state prefix sum
         int *d_statePrefixSum;
         cudaMalloc(&d_statePrefixSum, numLabels * sizeof(int));
         cubExclusiveScanInt(d_state, d_statePrefixSum, numLabels);
+        cudaDeviceSynchronize();
+
+        // print state prefix sum for debugging
+        std::vector<int> h_statePrefixSum(numLabels);
+        cudaMemcpy(h_statePrefixSum.data(), d_statePrefixSum, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < numLabels; i++) {
+            printf("StatePrefixSum[%d] = %d\n", i, h_statePrefixSum[i]);
+        }
         
         // Compute new labels and keep flags for surviving points
         int *d_newLabels, *d_keepFlags, *d_scatterIdx;
@@ -509,23 +539,43 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_newLabels, d_keepFlags, currentN);
         cudaDeviceSynchronize();
         
+        // print keepFlags for debugging
+        std::vector<int> h_keepFlags(currentN);
+        cudaMemcpy(h_keepFlags.data(), d_keepFlags, currentN * sizeof(int), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+            printf("KeepFlags[%d] = %d\n", i, h_keepFlags[i]);
+        }
+        
         // Compute scatter indices using exclusive scan on keepFlags
         cubExclusiveScanInt(d_keepFlags, d_scatterIdx, currentN);
+        cudaDeviceSynchronize();
+        // print scatterIdx for debugging
+        std::vector<int> h_scatterIdx(currentN);
+        cudaMemcpy(h_scatterIdx.data(), d_scatterIdx, currentN * sizeof(int), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+            printf("ScatterIdx[%d] = %d\n", i, h_scatterIdx[i]);
+        }
         
         // Count how many points survive (last keepFlag + last scatterIdx)
         int lastKeep, lastScatter;
         cudaMemcpy(&lastKeep, d_keepFlags + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(&lastScatter, d_scatterIdx + currentN - 1, sizeof(int), cudaMemcpyDeviceToHost);
         int newN = lastScatter + lastKeep;
+        printf("NewN = %d\n", newN);
         
         // Get max points per segment to update ANS
         std::vector<DistIdxPair> h_maxPerSegment(numLabels);
         cudaMemcpy(h_maxPerSegment.data(), d_maxPerSegment, numLabels * sizeof(DistIdxPair), cudaMemcpyDeviceToHost);
+
+        // print maxPerSegment for debugging
+        for (int i = 0; i < numLabels; i++) {
+            printf("MaxPerSegment[%d] = (dist: %f, idx: %d)\n", i, h_maxPerSegment[i].dist, h_maxPerSegment[i].idx);
+        }
         
         // Count how many new hull points were found
         std::vector<int> h_state(numLabels);
         cudaMemcpy(h_state.data(), d_state, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
-        
+
         int numNewHullPoints = 0;
         for (int i = 0; i < numLabels; i++) {
             if (h_state[i] == 1) {
@@ -544,6 +594,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             cudaFree(d_newLabels);
             cudaFree(d_keepFlags);
             cudaFree(d_scatterIdx);
+            printf("No new hull points found, terminating.\n");
             break;
         }
         
@@ -567,7 +618,13 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         }
         // Add the final endpoint
         newAns.push_back(ans[numLabels]);
+        // print new ANS for debugging
+        printf("New ANS points:\n");
+        for (size_t i = 0; i < newAns.size(); i++) {
+            printf("ANS[%zu] = (%.3f, %.3f)\n", i, newAns[i].x, newAns[i].y);
+        }
         ans = newAns;
+        printf("Updated ANS size: %zu\n", ans.size());
         
         // If no points survive, we're done
         if (newN == 0) {
@@ -611,6 +668,21 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         // Reallocate distances array if needed
         cudaFree(d_distances);
         cudaMalloc(&d_distances, currentN * sizeof(float));
+
+        // print all current points as well as their labels
+        std::vector<float> h_px_final(currentN), h_py_final(currentN);
+        std::vector<int> h_labels_final(currentN);
+        cudaMemcpy(h_px_final.data(), d_px, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_py_final.data(), d_py, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_labels_final.data(), d_labels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+            printf("Current Point[%d] = (%.3f, %.3f), Label = %d\n", i, h_px_final[i], h_py_final[i], h_labels_final[i]);
+        }
+
+        // cleanup temps
+        h_px_final.clear();
+        h_py_final.clear();
+        h_labels_final.clear();
         
         // Cleanup iteration-specific allocations
         cudaFree(d_segmentOffsets);
