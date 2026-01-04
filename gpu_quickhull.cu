@@ -143,10 +143,11 @@ __global__ void buildDistIdxArray(const float *distances, DistIdxPair *pairs, in
 __global__ void findSegmentOffsetsKernel(const int *labels, int *offsets, int numSegments, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     
-    // First thread sets first segment start
+    // First thread sets sentinel and the offset for the first label in the array
     if (i == 0) {
-        offsets[0] = 0;
         offsets[numSegments] = n;  // Sentinel
+        // The first point's label determines where that segment starts (at index 0)
+        offsets[labels[0]] = 0;
     }
     
     // Each thread checks if there's a segment boundary at position i+1
