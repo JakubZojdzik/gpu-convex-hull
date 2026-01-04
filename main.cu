@@ -48,7 +48,7 @@ static int countUniquePoints(const float *x,
 
 int main()
 {
-    int N = 30;
+    // int N = 30;
 
     // float *px = (float*) malloc(sizeof(float) * N);
     // float *py = (float*) malloc(sizeof(float) * N);
@@ -89,6 +89,7 @@ int main()
     // (-3202.690, 9255.053)
     // (6903.475, 4420.772)
     // (3004.084, 7419.375)
+    int N = 5;
     float *px = new float[N]{
         -6789.278f, 3757.629f, -3202.690f, 6903.475f, 3004.084f
     };
