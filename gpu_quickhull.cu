@@ -377,13 +377,13 @@ __global__ void computeNewLabelsKernel(int *labels, int *statePrefixSum,
 
 // Kernel to count how many kept points go to each new label
 __global__ void countPerLabelKernel(int *newLabels, int *keepFlags, 
-                                     int *labelCounts, int n, int numNewLabels) {
+                                     int *labelCounts, int n, int newNumLabels) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
     
     if (keepFlags[idx]) {
         int newLabel = newLabels[idx];
-        if (newLabel >= 0 && newLabel < numNewLabels) {
+        if (newLabel >= 0 && newLabel < newNumLabels) {
             atomicAdd(&labelCounts[newLabel], 1);
         }
     }
@@ -527,6 +527,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaMemcpy(h_statePrefixSum.data(), d_statePrefixSum, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
 
         int numNewHullPoints = h_state[numLabels - 1] + h_statePrefixSum[numLabels - 1];
+        // Calculate number of new labels (after inserting max points)
+        int newNumLabels = numLabels + numNewHullPoints;
         
         // Compute new labels and keep flags for surviving points
         int *d_newLabels, *d_keepFlags, *d_scatterIdx;
@@ -541,35 +543,33 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_newLabels, d_keepFlags, currentN);
         cudaDeviceSynchronize();
         
-        // print goes left, goes right and new labels for debugging
-        std::vector<int> h_goesLeft(currentN), h_goesRight(currentN), h_newLabels(currentN);
-        cudaMemcpy(h_goesLeft.data(), d_goesLeft, currentN * sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_goesRight.data(), d_goesRight, currentN * sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_newLabels.data(), d_newLabels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
-        
-        // Calculate number of new labels (after inserting max points)
-        int numNewLabels = numLabels + numNewHullPoints;
-        
         // Count how many kept points go to each new label
         int *d_labelCounts, *d_labelOffsets, *d_labelCounters;
-        cudaMalloc(&d_labelCounts, numNewLabels * sizeof(int));
-        cudaMalloc(&d_labelOffsets, numNewLabels * sizeof(int));
-        cudaMalloc(&d_labelCounters, numNewLabels * sizeof(int));
-        cudaMemset(d_labelCounts, 0, numNewLabels * sizeof(int));
-        cudaMemset(d_labelCounters, 0, numNewLabels * sizeof(int));
+        cudaMalloc(&d_labelCounts, newNumLabels * sizeof(int));
+        cudaMalloc(&d_labelOffsets, newNumLabels * sizeof(int));
+        cudaMalloc(&d_labelCounters, newNumLabels * sizeof(int));
+        cudaMemset(d_labelCounts, 0, newNumLabels * sizeof(int));
+        cudaMemset(d_labelCounters, 0, newNumLabels * sizeof(int));
         
         countPerLabelKernel<<<numBlocks, BLOCK_SIZE>>>(
-            d_newLabels, d_keepFlags, d_labelCounts, currentN, numNewLabels);
+            d_newLabels, d_keepFlags, d_labelCounts, currentN, newNumLabels);
         cudaDeviceSynchronize();
         
         // Compute prefix sum of label counts to get starting offset for each label
-        cubExclusiveScanInt(d_labelCounts, d_labelOffsets, numNewLabels);
+        cubExclusiveScanInt(d_labelCounts, d_labelOffsets, newNumLabels);
         cudaDeviceSynchronize();
         
         // Compute scatter indices that maintain label order
         computeLocalScatterIdx<<<numBlocks, BLOCK_SIZE>>>(
             d_newLabels, d_keepFlags, d_labelOffsets, d_scatterIdx, d_labelCounters, currentN);
         cudaDeviceSynchronize();
+
+        std::vector<int> h_labelCounts(newNumLabels);
+        cudaMemcpy(h_labelCounts.data(), d_labelCounts, newNumLabels * sizeof(int), cudaMemcpyDeviceToHost);
+        int newN = 0;
+        for (int i = 0; i < newNumLabels; i++) {
+            newN += h_labelCounts[i];
+        }
         
         // If no new hull points found, we're done
         if (numNewHullPoints == 0) {
@@ -595,8 +595,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         
         // Build new ANS by inserting max points in correct positions
         // For each partition that splits, insert the max point between L and R
-        float* h_newAnsX = (float*)malloc((numNewLabels + 1) * sizeof(float));
-        float* h_newAnsY = (float*)malloc((numNewLabels + 1) * sizeof(float));
+        float* h_newAnsX = (float*)malloc((newNumLabels + 1) * sizeof(float));
+        float* h_newAnsY = (float*)malloc((newNumLabels + 1) * sizeof(float));
         int j = 0;
         for (int i = 0; i < numLabels; i++) {
             // Add the left endpoint of partition i (which is ans[i])
@@ -620,7 +620,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         h_ansX = h_newAnsX;
         h_ansY = h_newAnsY;
         
-        // Compact points: allocate new arrays and copy surviving points
         float *d_px_new, *d_py_new;
         int *d_labels_new;
         cudaMalloc(&d_px_new, newN * sizeof(float));
