@@ -481,29 +481,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_px, d_py, d_labels,
             d_ansX, d_ansY, (int)ans.size(),
             d_distances, currentN);
-
-
-        // print points for debugging
-        cudaMemcpy(h_px, d_px, currentN * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_py, d_py, currentN * sizeof(float), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < currentN; i++) {
-           // printf("Point[%d] = (%.3f, %.3f)\n", i, h_px[i], h_py[i]);
-        }
-
-        // print computed distances for debugging
-        std::vector<float> h_distances(currentN);
-        cudaMemcpy(h_distances.data(), d_distances, currentN * sizeof(float), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < currentN; i++) {
-           // printf("Distance[%d] = %f\n", i, h_distances[i]);
-        }
-
-        // print labels for debugging
-        std::vector<int> h_labels(currentN);
-        cudaMemcpy(h_labels.data(), d_labels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < currentN; i++) {
-           // printf("Label[%d] = %d\n", i, h_labels[i]);
-        }
-            
         cudaDeviceSynchronize();
 
         // Find max distance point for each partition using CUB segmented reduce
@@ -519,12 +496,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
                                d_maxPerSegment, currentN, numLabels);
         cudaDeviceSynchronize();
         
-        // print max per segment for debugging
         std::vector<DistIdxPair> h_maxPerSegment(numLabels);
         cudaMemcpy(h_maxPerSegment.data(), d_maxPerSegment, numLabels * sizeof(DistIdxPair), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < numLabels; i++) {
-           // printf("MaxPerSegment[%d] = (dist: %f, idx: %d)\n", i, h_maxPerSegment[i].dist, h_maxPerSegment[i].idx);
-        }
 
 
         // determine where do points go (left/right of max point) and partition state
@@ -665,13 +638,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         }
         // Add the final endpoint
         newAns.push_back(ans[numLabels]);
-        // print new ANS for debugging
-        // printf("New ANS points:\n");
-        for (size_t i = 0; i < newAns.size(); i++) {
-           // printf("ANS[%zu] = (%.3f, %.3f)\n", i, newAns[i].x, newAns[i].y);
-        }
         ans = newAns;
-        // printf("Updated ANS size: %zu\n", ans.size());
         
         // If no points survive, we're done
         if (newN == 0) {
@@ -820,16 +787,6 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         // d == 0: point is on the line, skip (collinear with endpoints)
     }
 
-    // printf("Upper hull points: \n");
-    for (size_t i = 0; i < upperX.size(); i++) {
-        // printf("(%.3f, %.3f)\n", upperX[i], upperY[i]);
-    }
-    // printf("Lower hull points: \n");
-    for (size_t i = 0; i < lowerX.size(); i++) {
-        // printf("(%.3f, %.3f)\n", lowerX[i], lowerY[i]);
-    }
-    // printf("\n");
-
     // Find upper hull (points above MIN->MAX, going from MIN to MAX)
     std::vector<Point> upperHull;
     if (!upperX.empty()) {
@@ -837,24 +794,12 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
                             minPt.x, minPt.y, maxPt.x, maxPt.y, upperHull);
     }
 
-    // printf("Upper hull points after QuickHull:\n");
-    for (const auto &p : upperHull) {
-        // printf("(%.3f, %.3f)\n", p.x, p.y);
-    }
-    // printf("\n");
-
     // Find lower hull (points below MIN->MAX, going from MAX to MIN)
     std::vector<Point> lowerHull;
     if (!lowerX.empty()) {
         gpuQuickHullOneSide(lowerX.data(), lowerY.data(), lowerX.size(),
                             maxPt.x, maxPt.y, minPt.x, minPt.y, lowerHull);
     }
-
-    // printf("Lower hull points after QuickHull:\n");
-    for (const auto &p : lowerHull) {
-        // printf("(%.3f, %.3f)\n", p.x, p.y);
-    }
-    // printf("\n");
 
     // Combine: MIN -> upper hull -> MAX -> lower hull -> back to MIN
     std::vector<Point> hull;
