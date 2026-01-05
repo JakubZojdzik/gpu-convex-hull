@@ -452,26 +452,28 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
 
     // ANS stores the hull points in order (on host, copied to device as needed)
     std::vector<Point> ans;
-    ans.push_back({leftX, leftY});
-    ans.push_back({rightX, rightY});
+
+    int maxAnsSize = n + 1;  // Upper bound on ANS size
+
+    float *h_ansX, *h_ansY;
+    h_ansX = (float*)malloc(maxAnsSize * sizeof(float));
+    h_ansY = (float*)malloc(maxAnsSize * sizeof(float));
+    h_ansX[0] = leftX;
+    h_ansY[0] = leftY;
+    h_ansX[1] = rightX;
+    h_ansY[1] = rightY;
     
     int currentN = n;
     int numLabels = 1;  // Start with 1 partition (label 0)
     
     // Allocate ANS arrays on device (will grow as needed)
-    int maxAnsSize = n + 1;  // Upper bound on ANS size
     cudaMalloc(&d_ansX, maxAnsSize * sizeof(float));
     cudaMalloc(&d_ansY, maxAnsSize * sizeof(float));
 
     while (true) {
         // Copy current ANS to device
-        std::vector<float> ansX(ans.size()), ansY(ans.size());
-        for (size_t i = 0; i < ans.size(); i++) {
-            ansX[i] = ans[i].x;
-            ansY[i] = ans[i].y;
-        }
-        cudaMemcpy(d_ansX, ansX.data(), ans.size() * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_ansY, ansY.data(), ans.size() * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_ansX, h_ansX, (numLabels + 1) * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_ansY, h_ansY, (numLabels + 1) * sizeof(float), cudaMemcpyHostToDevice);
 
         int numBlocks = (currentN + BLOCK_SIZE - 1) / BLOCK_SIZE;
         
@@ -479,7 +481,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         size_t sharedMemSize = 2 * (BLOCK_SIZE + 2) * sizeof(float);
         computeDistancesKernel<<<numBlocks, BLOCK_SIZE, sharedMemSize>>>(
             d_px, d_py, d_labels,
-            d_ansX, d_ansY, (int)ans.size(),
+            d_ansX, d_ansY, (numLabels + 1),
             d_distances, currentN);
         cudaDeviceSynchronize();
 
@@ -513,9 +515,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         // print state for debugging
         std::vector<int> h_state(numLabels);
         cudaMemcpy(h_state.data(), d_state, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < numLabels; i++) {
-           // printf("State[%d] = %d\n", i, h_state[i]);
-        }
 
         // count state prefix sum
         int *d_statePrefixSum;
@@ -526,9 +525,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         // print state prefix sum for debugging
         std::vector<int> h_statePrefixSum(numLabels);
         cudaMemcpy(h_statePrefixSum.data(), d_statePrefixSum, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < numLabels; i++) {
-           // printf("StatePrefixSum[%d] = %d\n", i, h_statePrefixSum[i]);
-        }
+
+        int numNewHullPoints = h_state[numLabels - 1] + h_statePrefixSum[numLabels - 1];
         
         // Compute new labels and keep flags for surviving points
         int *d_newLabels, *d_keepFlags, *d_scatterIdx;
@@ -548,17 +546,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaMemcpy(h_goesLeft.data(), d_goesLeft, currentN * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_goesRight.data(), d_goesRight, currentN * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_newLabels.data(), d_newLabels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < currentN; i++) {
-           // printf("GoesLeft[%d] = %d, GoesRight[%d] = %d, NewLabel[%d] = %d\n", i, h_goesLeft[i], i, h_goesRight[i], i, h_newLabels[i]);
-        }
-        
-        // Count how many new hull points were found
-        int numNewHullPoints = 0;
-        for (int i = 0; i < numLabels; i++) {
-            if (h_state[i] == 1) {
-                numNewHullPoints++;
-            }
-        }
         
         // Calculate number of new labels (after inserting max points)
         int numNewLabels = numLabels + numNewHullPoints;
@@ -584,22 +571,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_newLabels, d_keepFlags, d_labelOffsets, d_scatterIdx, d_labelCounters, currentN);
         cudaDeviceSynchronize();
         
-        // print scatterIdx for debugging
-        std::vector<int> h_scatterIdx(currentN);
-        cudaMemcpy(h_scatterIdx.data(), d_scatterIdx, currentN * sizeof(int), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < currentN; i++) {
-           // printf("ScatterIdx[%d] = %d\n", i, h_scatterIdx[i]);
-        }
-        
-        // Count how many points survive
-        std::vector<int> h_labelCounts(numNewLabels);
-        cudaMemcpy(h_labelCounts.data(), d_labelCounts, numNewLabels * sizeof(int), cudaMemcpyDeviceToHost);
-        int newN = 0;
-        for (int i = 0; i < numNewLabels; i++) {
-            newN += h_labelCounts[i];
-        }
-       // printf("NewN = %d\n", newN);
-        
         // If no new hull points found, we're done
         if (numNewHullPoints == 0) {
             cudaFree(d_segmentOffsets);
@@ -614,7 +585,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             cudaFree(d_labelCounts);
             cudaFree(d_labelOffsets);
             cudaFree(d_labelCounters);
-           // printf("No new hull points found, terminating.\n");
             break;
         }
         
@@ -625,37 +595,30 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         
         // Build new ANS by inserting max points in correct positions
         // For each partition that splits, insert the max point between L and R
-        std::vector<Point> newAns;
+        float* h_newAnsX = (float*)malloc((numNewLabels + 1) * sizeof(float));
+        float* h_newAnsY = (float*)malloc((numNewLabels + 1) * sizeof(float));
+        int j = 0;
         for (int i = 0; i < numLabels; i++) {
             // Add the left endpoint of partition i (which is ans[i])
-            newAns.push_back(ans[i]);
+            h_newAnsX[j] = ans[i].x;
+            h_newAnsY[j] = ans[i].y;
+            j++;
             
             // If partition i splits, add its max point
             if (h_state[i] == 1 && h_maxPerSegment[i].idx >= 0) {
                 int maxIdx = h_maxPerSegment[i].idx;
-                newAns.push_back({h_px_temp[maxIdx], h_py_temp[maxIdx]});
+                h_newAnsX[j] = h_px_temp[maxIdx];
+                h_newAnsY[j] = h_py_temp[maxIdx];
+                j++;
             }
         }
         // Add the final endpoint
-        newAns.push_back(ans[numLabels]);
-        ans = newAns;
-        
-        // If no points survive, we're done
-        if (newN == 0) {
-            cudaFree(d_segmentOffsets);
-            cudaFree(d_maxPerSegment);
-            cudaFree(d_state);
-            cudaFree(d_goesLeft);
-            cudaFree(d_goesRight);
-            cudaFree(d_statePrefixSum);
-            cudaFree(d_newLabels);
-            cudaFree(d_keepFlags);
-            cudaFree(d_scatterIdx);
-            cudaFree(d_labelCounts);
-            cudaFree(d_labelOffsets);
-            cudaFree(d_labelCounters);
-            break;
-        }
+        h_newAnsX[j] = ans[numLabels].x;
+        h_newAnsY[j] = ans[numLabels].y;
+        free(h_ansX);
+        free(h_ansY);
+        h_ansX = h_newAnsX;
+        h_ansY = h_newAnsY;
         
         // Compact points: allocate new arrays and copy surviving points
         float *d_px_new, *d_py_new;
