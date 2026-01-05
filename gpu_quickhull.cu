@@ -7,6 +7,7 @@
 #include <cub/device/device_scan.cuh>
 #include <cub/device/device_reduce.cuh>
 #include <cub/device/device_segmented_reduce.cuh>
+#include <cub/device/device_histogram.cuh>
 #include "utils.h"
 
 #define BLOCK_SIZE 512
@@ -358,9 +359,11 @@ __global__ void determineSide(float *px, float *py, int *labels,
 // Kernel to compute new labels for points that survive
 // Points are kept if goesLeft[i] || goesRight[i]
 // New label = label[i] + statePrefixSum[label[i]] + goesRight[i]
+// Non-kept points get label = newNumLabels (so histogram can count them separately)
 __global__ void computeNewLabelsKernel(int *labels, int *statePrefixSum,
                                         int *goesLeft, int *goesRight,
-                                        int *newLabels, int *keepFlags, int n) {
+                                        int *newLabels, int *keepFlags, 
+                                        int n, int newNumLabels) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
     
@@ -371,22 +374,41 @@ __global__ void computeNewLabelsKernel(int *labels, int *statePrefixSum,
         int label = labels[idx];
         newLabels[idx] = label + statePrefixSum[label] + goesRight[idx];
     } else {
-        newLabels[idx] = INT_MAX;  // Will be removed, sort to end
+        newLabels[idx] = newNumLabels;  // Will be removed, counted in separate histogram bin
     }
 }
 
-// Kernel to count how many kept points go to each new label
-__global__ void countPerLabelKernel(int *newLabels, int *keepFlags, 
-                                     int *labelCounts, int n, int newNumLabels) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) return;
+// CUB-based histogram for counting label occurrences
+// Much more efficient than atomicAdd-based kernel
+// newLabels should have values in [0, newNumLabels-1] for kept points,
+// and newNumLabels for non-kept points (which will be counted but ignored)
+void countPerLabelCUB(int *d_newLabels, int *d_labelCounts, int n, int newNumLabels) {
+    void *d_temp = nullptr;
+    size_t temp_bytes = 0;
     
-    if (keepFlags[idx]) {
-        int newLabel = newLabels[idx];
-        if (newLabel >= 0 && newLabel < newNumLabels) {
-            atomicAdd(&labelCounts[newLabel], 1);
-        }
-    }
+    // HistogramEven counts values in [lower_level, upper_level) with num_levels-1 bins
+    // We want bins for labels 0, 1, ..., newNumLabels-1, plus one extra bin for discarded points
+    int num_levels = newNumLabels + 2;  // Creates newNumLabels+1 bins
+    int lower_level = 0;
+    int upper_level = newNumLabels + 1;
+    
+    // Query temp storage size
+    cub::DeviceHistogram::HistogramEven(
+        d_temp, temp_bytes,
+        d_newLabels, d_labelCounts,
+        num_levels, lower_level, upper_level,
+        n);
+    
+    cudaMalloc(&d_temp, temp_bytes);
+    
+    // Run histogram
+    cub::DeviceHistogram::HistogramEven(
+        d_temp, temp_bytes,
+        d_newLabels, d_labelCounts,
+        num_levels, lower_level, upper_level,
+        n);
+    
+    cudaFree(d_temp);
 }
 
 // Kernel to compute local index within each label group
@@ -538,22 +560,22 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         computeNewLabelsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_labels, d_statePrefixSum,
             d_goesLeft, d_goesRight,
-            d_newLabels, d_keepFlags, currentN);
+            d_newLabels, d_keepFlags, currentN, newNumLabels);
         cudaDeviceSynchronize();
         
-        // Count how many kept points go to each new label
+        // Count how many kept points go to each new label using CUB histogram
+        // Allocate newNumLabels+1 to hold the extra bin for discarded points
         int *d_labelCounts, *d_labelOffsets, *d_labelCounters;
-        cudaMalloc(&d_labelCounts, newNumLabels * sizeof(int));
+        cudaMalloc(&d_labelCounts, (newNumLabels + 1) * sizeof(int));
         cudaMalloc(&d_labelOffsets, newNumLabels * sizeof(int));
         cudaMalloc(&d_labelCounters, newNumLabels * sizeof(int));
-        cudaMemset(d_labelCounts, 0, newNumLabels * sizeof(int));
         cudaMemset(d_labelCounters, 0, newNumLabels * sizeof(int));
         
-        countPerLabelKernel<<<numBlocks, BLOCK_SIZE>>>(
-            d_newLabels, d_keepFlags, d_labelCounts, currentN, newNumLabels);
+        countPerLabelCUB(d_newLabels, d_labelCounts, currentN, newNumLabels);
         cudaDeviceSynchronize();
         
         // Compute prefix sum of label counts to get starting offset for each label
+        // Only scan the first newNumLabels bins (ignore the discard bin)
         cubExclusiveScanInt(d_labelCounts, d_labelOffsets, newNumLabels);
         cudaDeviceSynchronize();
         
