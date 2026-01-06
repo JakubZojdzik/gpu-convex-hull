@@ -517,16 +517,14 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaDeviceSynchronize();
 
 
-        ///
         std::vector<DistIdxPair> h_maxPerSegment(numLabels);
         cudaMemcpy(h_maxPerSegment.data(), d_maxPerSegment, numLabels * sizeof(DistIdxPair), cudaMemcpyDeviceToHost);
+
+        ///
         for (int i = 0; i < numLabels; i++) {
            printf("MaxPerSegment[%d] = (dist: %f, idx: %d)\n", i, h_maxPerSegment[i].dist, h_maxPerSegment[i].idx);
         }
         ///
-        
-        std::vector<DistIdxPair> h_maxPerSegment(numLabels);
-        cudaMemcpy(h_maxPerSegment.data(), d_maxPerSegment, numLabels * sizeof(DistIdxPair), cudaMemcpyDeviceToHost);
 
 
         // determine where do points go (left/right of max point) and partition state
@@ -651,8 +649,8 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
 
         ///
         printf("New ANS points:\n");
-        for (size_t i = 0; i < newAns.size(); i++) {
-           printf("ANS[%zu] = (%.3f, %.3f)\n", i, newAns[i].x, newAns[i].y);
+        for (size_t i = 0; i < newAnsSize; i++) {
+           printf("ANS[%zu] = (%.3f, %.3f)\n", i, h_newAnsX[i], h_newAnsY[i]);
         }
         printf("Updated ANS size: %zu\n", newAnsSize);
         ///
