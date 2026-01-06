@@ -7,7 +7,6 @@
 #include <cub/device/device_scan.cuh>
 #include <cub/device/device_reduce.cuh>
 #include <cub/device/device_segmented_reduce.cuh>
-#include <cub/device/device_histogram.cuh>
 #include "utils.h"
 
 #define BLOCK_SIZE 512
@@ -359,11 +358,9 @@ __global__ void determineSide(float *px, float *py, int *labels,
 // Kernel to compute new labels for points that survive
 // Points are kept if goesLeft[i] || goesRight[i]
 // New label = label[i] + statePrefixSum[label[i]] + goesRight[i]
-// Non-kept points get label = newNumLabels (so histogram can count them separately)
 __global__ void computeNewLabelsKernel(int *labels, int *statePrefixSum,
                                         int *goesLeft, int *goesRight,
-                                        int *newLabels, int *keepFlags, 
-                                        int n, int newNumLabels) {
+                                        int *newLabels, int *keepFlags, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
     
@@ -374,41 +371,22 @@ __global__ void computeNewLabelsKernel(int *labels, int *statePrefixSum,
         int label = labels[idx];
         newLabels[idx] = label + statePrefixSum[label] + goesRight[idx];
     } else {
-        newLabels[idx] = newNumLabels;  // Will be removed, counted in separate histogram bin
+        newLabels[idx] = INT_MAX;  // Will be removed, sort to end
     }
 }
 
-// CUB-based histogram for counting label occurrences
-// Much more efficient than atomicAdd-based kernel
-// newLabels should have values in [0, newNumLabels-1] for kept points,
-// and newNumLabels for non-kept points (which will be counted but ignored)
-void countPerLabelCUB(int *d_newLabels, int *d_labelCounts, int n, int newNumLabels) {
-    void *d_temp = nullptr;
-    size_t temp_bytes = 0;
+// Kernel to count how many kept points go to each new label
+__global__ void countPerLabelKernel(int *newLabels, int *keepFlags, 
+                                     int *labelCounts, int n, int newNumLabels) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
     
-    // HistogramEven counts values in [lower_level, upper_level) with num_levels-1 bins
-    // We want bins for labels 0, 1, ..., newNumLabels-1, plus one extra bin for discarded points
-    int num_levels = newNumLabels + 2;  // Creates newNumLabels+1 bins
-    int lower_level = 0;
-    int upper_level = newNumLabels + 1;
-    
-    // Query temp storage size
-    cub::DeviceHistogram::HistogramEven(
-        d_temp, temp_bytes,
-        d_newLabels, d_labelCounts,
-        num_levels, lower_level, upper_level,
-        n);
-    
-    cudaMalloc(&d_temp, temp_bytes);
-    
-    // Run histogram
-    cub::DeviceHistogram::HistogramEven(
-        d_temp, temp_bytes,
-        d_newLabels, d_labelCounts,
-        num_levels, lower_level, upper_level,
-        n);
-    
-    cudaFree(d_temp);
+    if (keepFlags[idx]) {
+        int newLabel = newLabels[idx];
+        if (newLabel >= 0 && newLabel < newNumLabels) {
+            atomicAdd(&labelCounts[newLabel], 1);
+        }
+    }
 }
 
 // Kernel to compute local index within each label group
@@ -505,6 +483,26 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_distances, currentN);
         cudaDeviceSynchronize();
 
+        ///
+        cudaMemcpy(h_px, d_px, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_py, d_py, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+           printf("Point[%d] = (%.3f, %.3f)\n", i, h_px[i], h_py[i]);
+        }
+
+        std::vector<float> h_distances(currentN);
+        cudaMemcpy(h_distances.data(), d_distances, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+           printf("Distance[%d] = %f\n", i, h_distances[i]);
+        }
+
+        std::vector<int> h_labels(currentN);
+        cudaMemcpy(h_labels.data(), d_labels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < currentN; i++) {
+           printf("Label[%d] = %d\n", i, h_labels[i]);
+        }
+        ///
+
         // Find max distance point for each partition using CUB segmented reduce
         // This follows the paper's methodology: since points are sorted by label,
         // we can use segmented operations efficiently
@@ -517,6 +515,15 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         segmentedMaxDistReduce(d_distances, d_labels, d_segmentOffsets, 
                                d_maxPerSegment, currentN, numLabels);
         cudaDeviceSynchronize();
+
+
+        ///
+        std::vector<DistIdxPair> h_maxPerSegment(numLabels);
+        cudaMemcpy(h_maxPerSegment.data(), d_maxPerSegment, numLabels * sizeof(DistIdxPair), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < numLabels; i++) {
+           printf("MaxPerSegment[%d] = (dist: %f, idx: %d)\n", i, h_maxPerSegment[i].dist, h_maxPerSegment[i].idx);
+        }
+        ///
         
         std::vector<DistIdxPair> h_maxPerSegment(numLabels);
         cudaMemcpy(h_maxPerSegment.data(), d_maxPerSegment, numLabels * sizeof(DistIdxPair), cudaMemcpyDeviceToHost);
@@ -560,22 +567,22 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         computeNewLabelsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_labels, d_statePrefixSum,
             d_goesLeft, d_goesRight,
-            d_newLabels, d_keepFlags, currentN, newNumLabels);
+            d_newLabels, d_keepFlags, currentN);
         cudaDeviceSynchronize();
         
-        // Count how many kept points go to each new label using CUB histogram
-        // Allocate newNumLabels+1 to hold the extra bin for discarded points
+        // Count how many kept points go to each new label
         int *d_labelCounts, *d_labelOffsets, *d_labelCounters;
-        cudaMalloc(&d_labelCounts, (newNumLabels + 1) * sizeof(int));
+        cudaMalloc(&d_labelCounts, newNumLabels * sizeof(int));
         cudaMalloc(&d_labelOffsets, newNumLabels * sizeof(int));
         cudaMalloc(&d_labelCounters, newNumLabels * sizeof(int));
+        cudaMemset(d_labelCounts, 0, newNumLabels * sizeof(int));
         cudaMemset(d_labelCounters, 0, newNumLabels * sizeof(int));
         
-        countPerLabelCUB(d_newLabels, d_labelCounts, currentN, newNumLabels);
+        countPerLabelKernel<<<numBlocks, BLOCK_SIZE>>>(
+            d_newLabels, d_keepFlags, d_labelCounts, currentN, newNumLabels);
         cudaDeviceSynchronize();
         
         // Compute prefix sum of label counts to get starting offset for each label
-        // Only scan the first newNumLabels bins (ignore the discard bin)
         cubExclusiveScanInt(d_labelCounts, d_labelOffsets, newNumLabels);
         cudaDeviceSynchronize();
         
@@ -640,6 +647,15 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         free(h_ansY);
         h_ansX = h_newAnsX;
         h_ansY = h_newAnsY;
+
+
+        ///
+        printf("New ANS points:\n");
+        for (size_t i = 0; i < newAns.size(); i++) {
+           printf("ANS[%zu] = (%.3f, %.3f)\n", i, newAns[i].x, newAns[i].y);
+        }
+        printf("Updated ANS size: %zu\n", newAnsSize);
+        ///
 
         if (newN == 0) {
             cudaFree(d_segmentOffsets);
@@ -747,8 +763,6 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     Point minPt = {h_min.x, h_min.y};
     Point maxPt = {h_max.x, h_max.y};
 
-    // printf("Min Point: (%.3f, %.3f), Max Point: (%.3f, %.3f)\n", minPt.x, minPt.y, maxPt.x, maxPt.y);
-
     // Partition points into upper (above MIN->MAX line) and lower (below)
     std::vector<float> upperX, upperY, lowerX, lowerY;
     upperX.reserve(n);
@@ -772,6 +786,18 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
         // d == 0: point is on the line, skip (collinear with endpoints)
     }
 
+    ///
+    printf("Upper hull points: \n");
+    for (size_t i = 0; i < upperX.size(); i++) {
+        printf("(%.3f, %.3f)\n", upperX[i], upperY[i]);
+    }
+    printf("Lower hull points: \n");
+    for (size_t i = 0; i < lowerX.size(); i++) {
+        printf("(%.3f, %.3f)\n", lowerX[i], lowerY[i]);
+    }
+    printf("\n");
+    ///
+
     // Find upper hull (points above MIN->MAX, going from MIN to MAX)
     std::vector<Point> upperHull;
     if (!upperX.empty()) {
@@ -779,12 +805,28 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
                             minPt.x, minPt.y, maxPt.x, maxPt.y, upperHull);
     }
 
+    ///
+    printf("Upper hull points after QuickHull:\n");
+    for (const auto &p : upperHull) {
+        printf("(%.3f, %.3f)\n", p.x, p.y);
+    }
+    printf("\n");
+    ///
+
     // Find lower hull (points below MIN->MAX, going from MAX to MIN)
     std::vector<Point> lowerHull;
     if (!lowerX.empty()) {
         gpuQuickHullOneSide(lowerX.data(), lowerY.data(), lowerX.size(),
                             maxPt.x, maxPt.y, minPt.x, minPt.y, lowerHull);
     }
+
+    ///
+    printf("Lower hull points after QuickHull:\n");
+    for (const auto &p : lowerHull) {
+        printf("(%.3f, %.3f)\n", p.x, p.y);
+    }
+    printf("\n");
+    ///
 
     // Combine: MIN -> upper hull -> MAX -> lower hull -> back to MIN
     std::vector<Point> hull;
