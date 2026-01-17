@@ -507,15 +507,15 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     int numLabels = 1;  // Start with 1 partition (label 0)
     int ansSize = 2;
 
+    // Allocate ANS arrays on device (will grow as needed)
+    cudaMalloc(&d_ansX, maxAnsSize * sizeof(float));
+    cudaMalloc(&d_ansY, maxAnsSize * sizeof(float));
+
     cudaMemcpy(d_ansX, h_ansX, ansSize * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_ansY, h_ansY, ansSize * sizeof(float), cudaMemcpyHostToDevice);
 
     free(h_ansX);
     free(h_ansY);
-    
-    // Allocate ANS arrays on device (will grow as needed)
-    cudaMalloc(&d_ansX, maxAnsSize * sizeof(float));
-    cudaMalloc(&d_ansY, maxAnsSize * sizeof(float));
 
     while (true) {
         int numBlocks = (currentN + BLOCK_SIZE - 1) / BLOCK_SIZE;
@@ -700,14 +700,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaFree(d_labelCounters);
     }
 
-    // Cleanup
-    cudaFree(d_px);
-    cudaFree(d_py);
-    cudaFree(d_distances);
-    cudaFree(d_labels);
-    cudaFree(d_ansX);
-    cudaFree(d_ansY);
-
     // Return hull points (excluding endpoints which are added by caller)
     // ansSize includes both endpoints, so hull points are indices 1 to ansSize-2
 
@@ -722,6 +714,14 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     
     free(h_ansX);
     free(h_ansY);
+
+    // Cleanup
+    cudaFree(d_px);
+    cudaFree(d_py);
+    cudaFree(d_distances);
+    cudaFree(d_labels);
+    cudaFree(d_ansX);
+    cudaFree(d_ansY);
 }
 
 
