@@ -545,7 +545,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         determineSide<<<numBlocks, BLOCK_SIZE>>>(d_px, d_py, d_labels, d_ansX, d_ansY, d_state, d_maxPerSegment, d_goesLeft, d_goesRight, currentN);
         cudaDeviceSynchronize();
 
-        // print state for debugging
         std::vector<int> h_state(numLabels);
         cudaMemcpy(h_state.data(), d_state, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
 
@@ -555,7 +554,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cubExclusiveScanInt(d_state, d_statePrefixSum, numLabels);
         cudaDeviceSynchronize();
 
-        // print state prefix sum for debugging
         std::vector<int> h_statePrefixSum(numLabels);
         cudaMemcpy(h_statePrefixSum.data(), d_statePrefixSum, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
 
@@ -579,7 +577,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         // Count how many kept points go to each new label
         int *d_labelCounts, *d_labelOffsets, *d_labelCounters;
         cudaMalloc(&d_labelCounts, newNumLabels * sizeof(int));
-        cudaMalloc(&d_labelOffsets, newNumLabels * sizeof(int));
+        cudaMalloc(&d_labelOffsets, (newNumLabels + 1) * sizeof(int));  // +1 to get total count
         cudaMalloc(&d_labelCounters, newNumLabels * sizeof(int));
         cudaMemset(d_labelCounts, 0, newNumLabels * sizeof(int));
         cudaMemset(d_labelCounters, 0, newNumLabels * sizeof(int));
@@ -589,22 +587,15 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaDeviceSynchronize();
         
         // Compute prefix sum of label counts to get starting offset for each label
-        cubExclusiveScanInt(d_labelCounts, d_labelOffsets, newNumLabels);
+        // Scan newNumLabels+1 elements so that d_labelOffsets[newNumLabels] = total count
+        cubExclusiveScanInt(d_labelCounts, d_labelOffsets, newNumLabels + 1);
         cudaDeviceSynchronize();
         
-        // Compute scatter indices that maintain label order
-        computeLocalScatterIdx<<<numBlocks, BLOCK_SIZE>>>(
-            d_newLabels, d_keepFlags, d_labelOffsets, d_scatterIdx, d_labelCounters, currentN);
-        cudaDeviceSynchronize();
-
-        std::vector<int> h_labelCounts(newNumLabels);
-        cudaMemcpy(h_labelCounts.data(), d_labelCounts, newNumLabels * sizeof(int), cudaMemcpyDeviceToHost);
-        int newN = 0;
-        for (int i = 0; i < newNumLabels; i++) {
-            newN += h_labelCounts[i];
-        }
+        // Get newN directly from the prefix sum (last element = total count of kept points)
+        int newN;
+        cudaMemcpy(&newN, d_labelOffsets + newNumLabels, sizeof(int), cudaMemcpyDeviceToHost);
         
-        // If no new hull points found, we're done
+        // If no new hull points found, we're done (no need to update ANS)
         if (numNewHullPoints == 0) {
             cudaFree(d_segmentOffsets);
             cudaFree(d_maxPerSegment);
@@ -653,19 +644,17 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         free(h_ansY);
         h_ansX = h_newAnsX;
         h_ansY = h_newAnsY;
-
+        ansSize = newAnsSize;
 
         ///
         debug("New ANS points:\n");
-        for (size_t i = 0; i < newAnsSize; i++) {
-           debug("ANS[%zu] = (%.3f, %.3f)\n", i, h_newAnsX[i], h_newAnsY[i]);
+        for (int i = 0; i < newAnsSize; i++) {
+           debug("ANS[%d] = (%.3f, %.3f)\n", i, h_newAnsX[i], h_newAnsY[i]);
         }
-        debug("Updated ANS size: %zu\n", newAnsSize);
+        debug("Updated ANS size: %d\n", newAnsSize);
         ///
 
-        // Update ansSize after building new ANS
-        ansSize = newAnsSize;
-
+        // If no points remain to process, we're done
         if (newN == 0) {
             cudaFree(d_segmentOffsets);
             cudaFree(d_maxPerSegment);
@@ -681,6 +670,11 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             cudaFree(d_labelCounters);
             break;
         }
+        
+        // Compute scatter indices that maintain label order (only needed if we're compacting)
+        computeLocalScatterIdx<<<numBlocks, BLOCK_SIZE>>>(
+            d_newLabels, d_keepFlags, d_labelOffsets, d_scatterIdx, d_labelCounters, currentN);
+        cudaDeviceSynchronize();
         
         float *d_px_new, *d_py_new;
         int *d_labels_new;
@@ -701,7 +695,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         d_px = d_px_new;
         d_py = d_py_new;
         d_labels = d_labels_new;
-        ansSize = newAnsSize;
         
         // Update counts
         currentN = newN;
