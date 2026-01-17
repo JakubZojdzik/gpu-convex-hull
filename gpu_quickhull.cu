@@ -11,6 +11,14 @@
 
 #define BLOCK_SIZE 512
 
+#define DEBUG_PRINT
+#ifdef DEBUG_PRINT
+#define debug(...) printf(__VA_ARGS__);
+#else
+#define debug(...) do {} while (0)
+#endif
+
+
 struct MinMaxPoint {
     float x;
     float y;
@@ -487,19 +495,19 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaMemcpy(h_px, d_px, currentN * sizeof(float), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_py, d_py, currentN * sizeof(float), cudaMemcpyDeviceToHost);
         for (int i = 0; i < currentN; i++) {
-           printf("Point[%d] = (%.3f, %.3f)\n", i, h_px[i], h_py[i]);
+           debug("Point[%d] = (%.3f, %.3f)\n", i, h_px[i], h_py[i]);
         }
 
         std::vector<float> h_distances(currentN);
         cudaMemcpy(h_distances.data(), d_distances, currentN * sizeof(float), cudaMemcpyDeviceToHost);
         for (int i = 0; i < currentN; i++) {
-           printf("Distance[%d] = %f\n", i, h_distances[i]);
+           debug("Distance[%d] = %f\n", i, h_distances[i]);
         }
 
         std::vector<int> h_labels(currentN);
         cudaMemcpy(h_labels.data(), d_labels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
         for (int i = 0; i < currentN; i++) {
-           printf("Label[%d] = %d\n", i, h_labels[i]);
+           debug("Label[%d] = %d\n", i, h_labels[i]);
         }
         ///
 
@@ -522,7 +530,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
 
         ///
         for (int i = 0; i < numLabels; i++) {
-           printf("MaxPerSegment[%d] = (dist: %f, idx: %d)\n", i, h_maxPerSegment[i].dist, h_maxPerSegment[i].idx);
+           debug("MaxPerSegment[%d] = (dist: %f, idx: %d)\n", i, h_maxPerSegment[i].dist, h_maxPerSegment[i].idx);
         }
         ///
 
@@ -648,11 +656,11 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
 
 
         ///
-        printf("New ANS points:\n");
+        debug("New ANS points:\n");
         for (size_t i = 0; i < newAnsSize; i++) {
-           printf("ANS[%zu] = (%.3f, %.3f)\n", i, h_newAnsX[i], h_newAnsY[i]);
+           debug("ANS[%zu] = (%.3f, %.3f)\n", i, h_newAnsX[i], h_newAnsY[i]);
         }
-        printf("Updated ANS size: %zu\n", newAnsSize);
+        debug("Updated ANS size: %zu\n", newAnsSize);
         ///
 
         // Update ansSize after building new ANS
@@ -792,15 +800,15 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     }
 
     ///
-    printf("Upper hull points: \n");
+    debug("Upper hull points: \n");
     for (size_t i = 0; i < upperX.size(); i++) {
-        printf("(%.3f, %.3f)\n", upperX[i], upperY[i]);
+        debug("(%.3f, %.3f)\n", upperX[i], upperY[i]);
     }
-    printf("Lower hull points: \n");
+    debug("Lower hull points: \n");
     for (size_t i = 0; i < lowerX.size(); i++) {
-        printf("(%.3f, %.3f)\n", lowerX[i], lowerY[i]);
+        debug("(%.3f, %.3f)\n", lowerX[i], lowerY[i]);
     }
-    printf("\n");
+    debug("\n");
     ///
 
     // Find upper hull (points above MIN->MAX, going from MIN to MAX)
@@ -811,11 +819,11 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     }
 
     ///
-    printf("Upper hull points after QuickHull:\n");
+    debug("Upper hull points after QuickHull:\n");
     for (const auto &p : upperHull) {
-        printf("(%.3f, %.3f)\n", p.x, p.y);
+        debug("(%.3f, %.3f)\n", p.x, p.y);
     }
-    printf("\n");
+    debug("\n");
     ///
 
     // Find lower hull (points below MIN->MAX, going from MAX to MIN)
@@ -826,11 +834,11 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     }
 
     ///
-    printf("Lower hull points after QuickHull:\n");
+    debug("Lower hull points after QuickHull:\n");
     for (const auto &p : lowerHull) {
-        printf("(%.3f, %.3f)\n", p.x, p.y);
+        debug("(%.3f, %.3f)\n", p.x, p.y);
     }
-    printf("\n");
+    debug("\n");
     ///
 
     // Combine: MIN -> upper hull -> MAX -> lower hull -> back to MIN
