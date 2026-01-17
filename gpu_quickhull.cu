@@ -502,16 +502,16 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     h_ansY[0] = leftY;
     h_ansX[1] = rightX;
     h_ansY[1] = rightY;
-    
+
+    int currentN = n;
+    int numLabels = 1;  // Start with 1 partition (label 0)
+    int ansSize = 2;
+
     cudaMemcpy(d_ansX, h_ansX, ansSize * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_ansY, h_ansY, ansSize * sizeof(float), cudaMemcpyHostToDevice);
 
     free(h_ansX);
     free(h_ansY);
-
-    int currentN = n;
-    int numLabels = 1;  // Start with 1 partition (label 0)
-    int ansSize = 2;
     
     // Allocate ANS arrays on device (will grow as needed)
     cudaMalloc(&d_ansX, maxAnsSize * sizeof(float));
