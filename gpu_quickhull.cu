@@ -427,6 +427,41 @@ __global__ void compactPointsKernel(float *pxIn, float *pyIn, int *labelsIn,
     }
 }
 
+// Kernel to build new ANS array on GPU
+// Each thread handles one old partition (label)
+// statePrefixSum[i] tells us how many new points were inserted before partition i
+// state[i] == 1 means partition i has a max point to insert
+__global__ void buildNewAnsKernel(float *oldAnsX, float *oldAnsY,
+                                   float *newAnsX, float *newAnsY,
+                                   float *px, float *py,
+                                   int *state, int *statePrefixSum,
+                                   DistIdxPair *maxPerSegment,
+                                   int numLabels) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i > numLabels) return;  // Need to handle numLabels+1 positions (including final endpoint)
+    
+    if (i < numLabels) {
+        // Position for left endpoint of partition i
+        int newPos = i + statePrefixSum[i];
+        newAnsX[newPos] = oldAnsX[i];
+        newAnsY[newPos] = oldAnsY[i];
+        
+        // If this partition splits, insert max point after the left endpoint
+        if (state[i] == 1 && maxPerSegment[i].idx >= 0) {
+            int maxIdx = maxPerSegment[i].idx;
+            newAnsX[newPos + 1] = px[maxIdx];
+            newAnsY[newPos + 1] = py[maxIdx];
+        }
+    } else {
+        // i == numLabels: add the final endpoint
+        // Its position is numLabels + total number of inserted points
+        int totalInserted = statePrefixSum[numLabels - 1] + state[numLabels - 1];
+        int newPos = numLabels + totalInserted;
+        newAnsX[newPos] = oldAnsX[numLabels];
+        newAnsY[newPos] = oldAnsY[numLabels];
+    }
+}
+
 
 // ============================================================================
 // QuickHull for one side: finds hull points between leftPt and rightPt
@@ -545,21 +580,31 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         determineSide<<<numBlocks, BLOCK_SIZE>>>(d_px, d_py, d_labels, d_ansX, d_ansY, d_state, d_maxPerSegment, d_goesLeft, d_goesRight, currentN);
         cudaDeviceSynchronize();
 
-        std::vector<int> h_state(numLabels);
-        cudaMemcpy(h_state.data(), d_state, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
-
         // count state prefix sum
         int *d_statePrefixSum;
         cudaMalloc(&d_statePrefixSum, numLabels * sizeof(int));
         cubExclusiveScanInt(d_state, d_statePrefixSum, numLabels);
         cudaDeviceSynchronize();
 
-        std::vector<int> h_statePrefixSum(numLabels);
-        cudaMemcpy(h_statePrefixSum.data(), d_statePrefixSum, numLabels * sizeof(int), cudaMemcpyDeviceToHost);
-
-        int numNewHullPoints = h_state[numLabels - 1] + h_statePrefixSum[numLabels - 1];
+        // Get numNewHullPoints from GPU: statePrefixSum[numLabels-1] + state[numLabels-1]
+        int lastState, lastStatePrefixSum;
+        cudaMemcpy(&lastState, d_state + numLabels - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&lastStatePrefixSum, d_statePrefixSum + numLabels - 1, sizeof(int), cudaMemcpyDeviceToHost);
+        int numNewHullPoints = lastState + lastStatePrefixSum;
         // Calculate number of new labels (after inserting max points)
         int newNumLabels = numLabels + numNewHullPoints;
+
+
+        // If no new hull points found, we're done (no need to update ANS)
+        if (numNewHullPoints == 0) {
+            cudaFree(d_segmentOffsets);
+            cudaFree(d_maxPerSegment);
+            cudaFree(d_state);
+            cudaFree(d_goesLeft);
+            cudaFree(d_goesRight);
+            cudaFree(d_statePrefixSum);
+            break;
+        }
         
         // Compute new labels and keep flags for surviving points
         int *d_newLabels, *d_keepFlags, *d_scatterIdx;
@@ -590,66 +635,46 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         // Scan newNumLabels+1 elements so that d_labelOffsets[newNumLabels] = total count
         cubExclusiveScanInt(d_labelCounts, d_labelOffsets, newNumLabels + 1);
         cudaDeviceSynchronize();
-        
+
         // Get newN directly from the prefix sum (last element = total count of kept points)
         int newN;
         cudaMemcpy(&newN, d_labelOffsets + newNumLabels, sizeof(int), cudaMemcpyDeviceToHost);
         
-        // If no new hull points found, we're done (no need to update ANS)
-        if (numNewHullPoints == 0) {
-            cudaFree(d_segmentOffsets);
-            cudaFree(d_maxPerSegment);
-            cudaFree(d_state);
-            cudaFree(d_goesLeft);
-            cudaFree(d_goesRight);
-            cudaFree(d_statePrefixSum);
-            cudaFree(d_newLabels);
-            cudaFree(d_keepFlags);
-            cudaFree(d_scatterIdx);
-            cudaFree(d_labelCounts);
-            cudaFree(d_labelOffsets);
-            cudaFree(d_labelCounters);
-            break;
-        }
+        // Build new ANS on GPU
+        // newAnsSize = numLabels + 1 + number of splits (statePrefixSum[numLabels-1] + state[numLabels-1])
+        int newAnsSize = numLabels + 1 + newNumLabels - numLabels; // numLabels+1 old + (newNumLabels-numLabels) new max points
         
-        // Copy point coordinates to host to get max point coords
-        std::vector<float> h_px_temp(currentN), h_py_temp(currentN);
-        cudaMemcpy(h_px_temp.data(), d_px, currentN * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_py_temp.data(), d_py, currentN * sizeof(float), cudaMemcpyDeviceToHost);
+        // Allocate temp device arrays for new ANS
+        float *d_newAnsX, *d_newAnsY;
+        cudaMalloc(&d_newAnsX, newAnsSize * sizeof(float));
+        cudaMalloc(&d_newAnsY, newAnsSize * sizeof(float));
         
-        // Build new ANS by inserting max points in correct positions
-        // For each partition that splits, insert the max point between L and R
-        float* h_newAnsX = (float*)malloc((newNumLabels + 1) * sizeof(float));
-        float* h_newAnsY = (float*)malloc((newNumLabels + 1) * sizeof(float));
-        int newAnsSize = 0;
-        for (int i = 0; i < numLabels; i++) {
-            // Add the left endpoint of partition i
-            h_newAnsX[newAnsSize] = h_ansX[i];
-            h_newAnsY[newAnsSize] = h_ansY[i];
-            newAnsSize++;
-            
-            // If partition i splits, add its max point
-            if (h_state[i] == 1 && h_maxPerSegment[i].idx >= 0) {
-                int maxIdx = h_maxPerSegment[i].idx;
-                h_newAnsX[newAnsSize] = h_px_temp[maxIdx];
-                h_newAnsY[newAnsSize] = h_py_temp[maxIdx];
-                newAnsSize++;
-            }
-        }
-        // Add the final endpoint
-        h_newAnsX[newAnsSize] = h_ansX[numLabels];
-        h_newAnsY[newAnsSize] = h_ansY[numLabels];
-        newAnsSize++;
+        // Build new ANS on GPU
+        int ansBlocks = (numLabels + 1 + BLOCK_SIZE) / BLOCK_SIZE;
+        buildNewAnsKernel<<<ansBlocks, BLOCK_SIZE>>>(
+            d_ansX, d_ansY, d_newAnsX, d_newAnsY,
+            d_px, d_py, d_state, d_statePrefixSum, d_maxPerSegment, numLabels);
+        cudaDeviceSynchronize();
+        
+        // Copy new ANS back to d_ansX, d_ansY (which has maxAnsSize allocated)
+        cudaMemcpy(d_ansX, d_newAnsX, newAnsSize * sizeof(float), cudaMemcpyDeviceToDevice);
+        cudaMemcpy(d_ansY, d_newAnsY, newAnsSize * sizeof(float), cudaMemcpyDeviceToDevice);
+        cudaFree(d_newAnsX);
+        cudaFree(d_newAnsY);
+        
+        // Update host ANS arrays (reallocate and copy from device)
         free(h_ansX);
         free(h_ansY);
-        h_ansX = h_newAnsX;
-        h_ansY = h_newAnsY;
+        h_ansX = (float*)malloc(newAnsSize * sizeof(float));
+        h_ansY = (float*)malloc(newAnsSize * sizeof(float));
+        cudaMemcpy(h_ansX, d_ansX, newAnsSize * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_ansY, d_ansY, newAnsSize * sizeof(float), cudaMemcpyDeviceToHost);
         ansSize = newAnsSize;
 
         ///
         debug("New ANS points:\n");
         for (int i = 0; i < newAnsSize; i++) {
-           debug("ANS[%d] = (%.3f, %.3f)\n", i, h_newAnsX[i], h_newAnsY[i]);
+           debug("ANS[%d] = (%.3f, %.3f)\n", i, h_ansX[i], h_ansY[i]);
         }
         debug("Updated ANS size: %d\n", newAnsSize);
         ///
