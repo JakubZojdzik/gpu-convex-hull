@@ -230,9 +230,9 @@ __global__ void computeDistancesKernel(float *px, float *py, int *labels,
     // stores them at local indices [0, ansRange-1] in shared memory
     int ansRange = maxLabel - minLabel + 2;
     if (tid < ansRange) {
-        // if ((minLabel + tid) >= ansSize) {
-        //     return;
-        // }
+        if ((minLabel + tid) >= ansSize) {
+            return;
+        }
         sAnsX[tid] = ansX[minLabel + tid];
         sAnsY[tid] = ansY[minLabel + tid];
     }
