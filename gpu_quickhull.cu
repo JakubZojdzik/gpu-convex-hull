@@ -186,7 +186,7 @@ void segmentedMaxDistReduce(
     // Build segment offsets from sorted labels
     findSegmentOffsetsKernel<<<numBlocks, BLOCK_SIZE>>>(
         d_labels, d_segmentOffsets, numSegments, n);
-    cudaDeviceSynchronize();
+    cudaDeviceSynchronize();  // Need sync before host reads offsets
 
     // copy back to host
     int h_offsets[numSegments + 1];
@@ -203,7 +203,7 @@ void segmentedMaxDistReduce(
     DistIdxPair *d_pairs;
     cudaMalloc(&d_pairs, n * sizeof(DistIdxPair));
     buildDistIdxArray<<<numBlocks, BLOCK_SIZE>>>(d_distances, d_pairs, n);
-    cudaDeviceSynchronize();
+    // No sync needed - CUB will handle dependency
     
     // Use CUB segmented reduce to find max per segment
     void *d_temp = nullptr;
@@ -229,7 +229,7 @@ void segmentedMaxDistReduce(
         d_segmentOffsets, d_segmentOffsets + 1,
         MaxDistOp(), identity);
     
-    cudaDeviceSynchronize();
+    // No sync needed here - caller will sync if needed
     
     cudaFree(d_temp);
     cudaFree(d_pairs);
@@ -526,7 +526,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_px, d_py, d_labels,
             d_ansX, d_ansY, ansSize,
             d_distances, currentN);
-        cudaDeviceSynchronize();
 
         // Find max distance point for each partition using CUB segmented reduce
         // This follows the paper's methodology: since points are sorted by label,
@@ -549,19 +548,18 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaMemset(d_goesLeft, 0, currentN * sizeof(int));
         cudaMemset(d_goesRight, 0, currentN * sizeof(int));
         determineSide<<<numBlocks, BLOCK_SIZE>>>(d_px, d_py, d_labels, d_ansX, d_ansY, d_state, d_maxPerSegment, d_goesLeft, d_goesRight, currentN);
-        cudaDeviceSynchronize();
 
         // count state prefix sum
         int *d_statePrefixSum;
         cudaMalloc(&d_statePrefixSum, numLabels * sizeof(int));
         cubExclusiveScanInt(d_state, d_statePrefixSum, numLabels);
-        cudaDeviceSynchronize();
 
         // Get numNewHullPoints from GPU: statePrefixSum[numLabels-1] + state[numLabels-1]
         int lastState, lastStatePrefixSum;
         cudaMemcpy(&lastState, d_state + numLabels - 1, sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(&lastStatePrefixSum, d_statePrefixSum + numLabels - 1, sizeof(int), cudaMemcpyDeviceToHost);
         int numNewHullPoints = lastState + lastStatePrefixSum;
+
         // Calculate number of new labels (after inserting max points)
         int newNumLabels = numLabels + numNewHullPoints;
 
@@ -588,7 +586,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_labels, d_statePrefixSum,
             d_goesLeft, d_goesRight,
             d_newLabels, d_keepFlags, currentN);
-        cudaDeviceSynchronize();
         
         // Count how many kept points go to each new label
         int *d_labelCounts, *d_labelOffsets, *d_labelCounters;
@@ -600,12 +597,10 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         
         countPerLabelKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_newLabels, d_keepFlags, d_labelCounts, currentN, newNumLabels);
-        cudaDeviceSynchronize();
         
         // Compute prefix sum of label counts to get starting offset for each label
         // Scan newNumLabels+1 elements so that d_labelOffsets[newNumLabels] = total count
         cubExclusiveScanInt(d_labelCounts, d_labelOffsets, newNumLabels + 1);
-        cudaDeviceSynchronize();
 
         // Get newN directly from the prefix sum (last element = total count of kept points)
         int newN;
@@ -625,7 +620,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         buildNewAnsKernel<<<ansBlocks, BLOCK_SIZE>>>(
             d_ansX, d_ansY, d_newAnsX, d_newAnsY,
             d_px, d_py, d_state, d_statePrefixSum, d_maxPerSegment, numLabels);
-        cudaDeviceSynchronize();
         
         // Copy new ANS back to d_ansX, d_ansY (which has maxAnsSize allocated)
         cudaMemcpy(d_ansX, d_newAnsX, newAnsSize * sizeof(float), cudaMemcpyDeviceToDevice);
@@ -655,7 +649,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         // Compute scatter indices that maintain label order (only needed if we're compacting)
         computeLocalScatterIdx<<<numBlocks, BLOCK_SIZE>>>(
             d_newLabels, d_keepFlags, d_labelOffsets, d_scatterIdx, d_labelCounters, currentN);
-        cudaDeviceSynchronize();
         
         float *d_px_new, *d_py_new;
         int *d_labels_new;
@@ -667,7 +660,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_px, d_py, d_newLabels,
             d_px_new, d_py_new, d_labels_new,
             d_keepFlags, d_scatterIdx, currentN);
-        cudaDeviceSynchronize();
         
         // Swap arrays
         cudaFree(d_px);
