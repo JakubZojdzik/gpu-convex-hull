@@ -503,6 +503,12 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     h_ansX[1] = rightX;
     h_ansY[1] = rightY;
     
+    cudaMemcpy(d_ansX, h_ansX, ansSize * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_ansY, h_ansY, ansSize * sizeof(float), cudaMemcpyHostToDevice);
+
+    free(h_ansX);
+    free(h_ansY);
+
     int currentN = n;
     int numLabels = 1;  // Start with 1 partition (label 0)
     int ansSize = 2;
@@ -512,10 +518,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     cudaMalloc(&d_ansY, maxAnsSize * sizeof(float));
 
     while (true) {
-        // Copy current ANS to device
-        cudaMemcpy(d_ansX, h_ansX, ansSize * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_ansY, h_ansY, ansSize * sizeof(float), cudaMemcpyHostToDevice);
-
         int numBlocks = (currentN + BLOCK_SIZE - 1) / BLOCK_SIZE;
         
         // Compute distances for ALL points at once using labels
@@ -525,26 +527,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_ansX, d_ansY, ansSize,
             d_distances, currentN);
         cudaDeviceSynchronize();
-
-        ///
-        cudaMemcpy(h_px, d_px, currentN * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_py, d_py, currentN * sizeof(float), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < currentN; i++) {
-           debug("Point[%d] = (%.3f, %.3f)\n", i, h_px[i], h_py[i]);
-        }
-
-        std::vector<float> h_distances(currentN);
-        cudaMemcpy(h_distances.data(), d_distances, currentN * sizeof(float), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < currentN; i++) {
-           debug("Distance[%d] = %f\n", i, h_distances[i]);
-        }
-
-        std::vector<int> h_labels(currentN);
-        cudaMemcpy(h_labels.data(), d_labels, currentN * sizeof(int), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < currentN; i++) {
-           debug("Label[%d] = %d\n", i, h_labels[i]);
-        }
-        ///
 
         // Find max distance point for each partition using CUB segmented reduce
         // This follows the paper's methodology: since points are sorted by label,
@@ -558,17 +540,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         segmentedMaxDistReduce(d_distances, d_labels, d_segmentOffsets, 
                                d_maxPerSegment, currentN, numLabels);
         cudaDeviceSynchronize();
-
-
-        std::vector<DistIdxPair> h_maxPerSegment(numLabels);
-        cudaMemcpy(h_maxPerSegment.data(), d_maxPerSegment, numLabels * sizeof(DistIdxPair), cudaMemcpyDeviceToHost);
-
-        ///
-        for (int i = 0; i < numLabels; i++) {
-           debug("MaxPerSegment[%d] = (dist: %f, idx: %d)\n", i, h_maxPerSegment[i].dist, h_maxPerSegment[i].idx);
-        }
-        ///
-
 
         // determine where do points go (left/right of max point) and partition state
         cudaMalloc(&d_state, numLabels * sizeof(int));
@@ -662,22 +633,7 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaFree(d_newAnsX);
         cudaFree(d_newAnsY);
         
-        // Update host ANS arrays (reallocate and copy from device)
-        free(h_ansX);
-        free(h_ansY);
-        h_ansX = (float*)malloc(newAnsSize * sizeof(float));
-        h_ansY = (float*)malloc(newAnsSize * sizeof(float));
-        cudaMemcpy(h_ansX, d_ansX, newAnsSize * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_ansY, d_ansY, newAnsSize * sizeof(float), cudaMemcpyDeviceToHost);
         ansSize = newAnsSize;
-
-        ///
-        debug("New ANS points:\n");
-        for (int i = 0; i < newAnsSize; i++) {
-           debug("ANS[%d] = (%.3f, %.3f)\n", i, h_ansX[i], h_ansY[i]);
-        }
-        debug("Updated ANS size: %d\n", newAnsSize);
-        ///
 
         // If no points remain to process, we're done
         if (newN == 0) {
@@ -754,6 +710,12 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
 
     // Return hull points (excluding endpoints which are added by caller)
     // ansSize includes both endpoints, so hull points are indices 1 to ansSize-2
+
+    h_ansX = (float*)malloc(ansSize * sizeof(float));
+    h_ansY = (float*)malloc(ansSize * sizeof(float));
+    cudaMemcpy(h_ansX, d_ansX, ansSize * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_ansY, d_ansY, ansSize * sizeof(float), cudaMemcpyDeviceToHost);
+
     for (int i = 1; i < ansSize - 1; i++) {
         hullPoints.push_back({h_ansX[i], h_ansY[i]});
     }
