@@ -655,6 +655,9 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         printf("Updated ANS size: %zu\n", newAnsSize);
         ///
 
+        // Update ansSize after building new ANS
+        ansSize = newAnsSize;
+
         if (newN == 0) {
             cudaFree(d_segmentOffsets);
             cudaFree(d_maxPerSegment);
@@ -724,9 +727,13 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     cudaFree(d_ansY);
 
     // Return hull points (excluding endpoints which are added by caller)
-    for (size_t i = 1; i < numLabels; i++) {
+    // ansSize includes both endpoints, so hull points are indices 1 to ansSize-2
+    for (int i = 1; i < ansSize - 1; i++) {
         hullPoints.push_back({h_ansX[i], h_ansY[i]});
     }
+    
+    free(h_ansX);
+    free(h_ansY);
 }
 
 
