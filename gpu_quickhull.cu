@@ -66,23 +66,19 @@ void findMinMaxX_CUB(const float *d_px,
                      MinMaxPoint &h_min,
                      MinMaxPoint &h_max)
 {
-    // Build point array
     MinMaxPoint *d_points;
     cudaMalloc(&d_points, n * sizeof(MinMaxPoint));
 
     int grid  = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     buildPointArray<<<grid, BLOCK_SIZE>>>(d_px, d_py, d_points, n);
 
-    // Output buffers
     MinMaxPoint *d_min, *d_max;
     cudaMalloc(&d_min, sizeof(MinMaxPoint));
     cudaMalloc(&d_max, sizeof(MinMaxPoint));
 
-    // Temporary storage
     void *d_temp = nullptr;
     size_t temp_bytes = 0;
 
-    // Query temp size (min)
     cub::DeviceReduce::Reduce(
         d_temp, temp_bytes,
         d_points, d_min,
@@ -93,7 +89,6 @@ void findMinMaxX_CUB(const float *d_px,
 
     cudaMalloc(&d_temp, temp_bytes);
 
-    // Run min reduction
     cub::DeviceReduce::Reduce(
         d_temp, temp_bytes,
         d_points, d_min,
@@ -102,7 +97,6 @@ void findMinMaxX_CUB(const float *d_px,
         MinMaxPoint{FLT_MAX, FLT_MAX, -1}
     );
 
-    // Run max reduction (reuse temp storage)
     cub::DeviceReduce::Reduce(
         d_temp, temp_bytes,
         d_points, d_max,
@@ -111,24 +105,21 @@ void findMinMaxX_CUB(const float *d_px,
         MinMaxPoint{-FLT_MAX, -FLT_MAX, -1}
     );
 
-    // Copy back
     cudaMemcpy(&h_min, d_min, sizeof(MinMaxPoint), cudaMemcpyDeviceToHost);
     cudaMemcpy(&h_max, d_max, sizeof(MinMaxPoint), cudaMemcpyDeviceToHost);
 
-    // Cleanup
     cudaFree(d_temp);
     cudaFree(d_points);
     cudaFree(d_min);
     cudaFree(d_max);
 }
 
-// Pair of distance and original point index
+// Pair of distance and point index
 struct DistIdxPair {
     float dist;
     int   idx;
 };
 
-// Reduction operator: returns pair with larger distance
 struct MaxDistOp {
     __host__ __device__
     DistIdxPair operator()(const DistIdxPair &a, const DistIdxPair &b) const {
@@ -136,7 +127,6 @@ struct MaxDistOp {
     }
 };
 
-// Kernel to build DistIdxPair array from distances
 __global__ void buildDistIdxArray(const float *distances, DistIdxPair *pairs, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
@@ -145,53 +135,35 @@ __global__ void buildDistIdxArray(const float *distances, DistIdxPair *pairs, in
     }
 }
 
-// Kernel to find segment offsets from sorted labels
-// For each segment i, offsets[i] = first index where label == i
-// offsets[numSegments] = n (sentinel)
 __global__ void findSegmentOffsetsKernel(const int *labels, int *offsets, int numSegments, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     
-    // First thread sets sentinel and the offset for the first label in the array
     if (i == 0) {
         offsets[numSegments] = n;  // Sentinel
-        // The first point's label determines where that segment starts (at index 0)
         offsets[labels[0]] = 0;
     }
     
-    // Each thread checks if there's a segment boundary at position i+1
-    if (i < n - 1) {
-        if (labels[i] != labels[i + 1]) {
-            // Boundary between segment labels[i] and labels[i+1]
-            offsets[labels[i + 1]] = i + 1;
-        }
-    }
+    if (i < n - 1 && labels[i] != labels[i + 1])
+        offsets[labels[i + 1]] = i + 1;
 }
 
 
-// ============================================================================
-// Segmented max distance reduction using CUB
-// Finds the max distance point for each partition (segment)
-// Points must be SORTED BY LABEL for this to work correctly
-// ============================================================================
 void segmentedMaxDistReduce(
     const float *d_distances,
     const int *d_labels,
-    int *d_segmentOffsets,  // Output: segment offsets [numSegments + 1]
-    DistIdxPair *d_maxPerSegment,  // Output: max dist-idx pair per segment
+    int *d_segmentOffsets,
+    DistIdxPair *d_maxPerSegment,
     int n,
     int numSegments)
 {
     int numBlocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     
-    // Build segment offsets from sorted labels
     findSegmentOffsetsKernel<<<numBlocks, BLOCK_SIZE>>>(
         d_labels, d_segmentOffsets, numSegments, n);
-    cudaDeviceSynchronize();  // Need sync before host reads offsets
+    cudaDeviceSynchronize();
 
-    // copy back to host
     int h_offsets[numSegments + 1];
     cudaMemcpy(h_offsets, d_segmentOffsets, (numSegments + 1) * sizeof(int), cudaMemcpyDeviceToHost);
-    // fill in any unset offsets
     for (int i = numSegments-1; i >= 1; i--) {
         if (h_offsets[i] == -1) {
             h_offsets[i] = h_offsets[i + 1];
@@ -199,19 +171,15 @@ void segmentedMaxDistReduce(
     }
     cudaMemcpy(d_segmentOffsets, h_offsets, (numSegments + 1) * sizeof(int), cudaMemcpyHostToDevice);
     
-    // Build DistIdxPair array
     DistIdxPair *d_pairs;
     cudaMalloc(&d_pairs, n * sizeof(DistIdxPair));
     buildDistIdxArray<<<numBlocks, BLOCK_SIZE>>>(d_distances, d_pairs, n);
-    // No sync needed - CUB will handle dependency
     
-    // Use CUB segmented reduce to find max per segment
     void *d_temp = nullptr;
     size_t temp_bytes = 0;
     
     DistIdxPair identity{0.0f, -1};
     
-    // Query temp storage size
     cub::DeviceSegmentedReduce::Reduce(
         d_temp, temp_bytes,
         d_pairs, d_maxPerSegment,
@@ -221,7 +189,6 @@ void segmentedMaxDistReduce(
     
     cudaMalloc(&d_temp, temp_bytes);
     
-    // Run segmented reduce
     cub::DeviceSegmentedReduce::Reduce(
         d_temp, temp_bytes,
         d_pairs, d_maxPerSegment,
@@ -229,20 +196,14 @@ void segmentedMaxDistReduce(
         d_segmentOffsets, d_segmentOffsets + 1,
         MaxDistOp(), identity);
     
-    // No sync needed here - caller will sync if needed
-    
     cudaFree(d_temp);
     cudaFree(d_pairs);
 }
 
 
-// Compute distances for all points at once using labels
-// Each point has a label indicating which partition it belongs to
-// The partition's line segment is from ans[label] to ans[label+1]
 __global__ void computeDistancesKernel(float *px, float *py, int *labels,
                                         float *ansX, float *ansY, int ansSize,
                                         float *distances, int n) {
-    // Shared memory for ANS chunk - each partition needs 2 consecutive points
     extern __shared__ float sharedAns[];
     float *sAnsX = sharedAns;
     float *sAnsY = &sharedAns[BLOCK_SIZE + 2];
@@ -250,9 +211,7 @@ __global__ void computeDistancesKernel(float *px, float *py, int *labels,
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int tid = threadIdx.x;
 
-    // Find the range of labels in this block
     __shared__ int minLabel, maxLabel;
-
     if (tid == 0) {
         minLabel = ansSize;
         maxLabel = -1;
@@ -266,16 +225,14 @@ __global__ void computeDistancesKernel(float *px, float *py, int *labels,
     }
     __syncthreads();
 
-    // Load required ANS entries into shared memory
-    // We need indices [minLabel, maxLabel+1] from global ANS
-    // Store them at local indices [0, ansRange-1] in shared memory
+    // loads required ans entries into shared memory
+    // we need indices [minLabel, maxLabel+1]
+    // stores them at local indices [0, ansRange-1] in shared memory
     int ansRange = maxLabel - minLabel + 2;
     if (tid < ansRange) {
-        if ((minLabel + tid) >= ansSize) {
-            // impossible
-           // printf("Error: ans index out of range in computeDistancesKernel\n");
-            return;
-        }
+        // if ((minLabel + tid) >= ansSize) {
+        //     return;
+        // }
         sAnsX[tid] = ansX[minLabel + tid];
         sAnsY[tid] = ansY[minLabel + tid];
     }
