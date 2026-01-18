@@ -38,7 +38,7 @@ int main()
     srand(time(NULL));
 
     int points = 0;
-    float radius = 100.0f;
+    float radius = 1.0f;
     while (points < N) {
         float x = radius * 2.0f * (rand() / (float)RAND_MAX) - radius;
         float y = radius * 2.0f * (rand() / (float)RAND_MAX) - radius;
