@@ -6,12 +6,12 @@
 #include <cuda_runtime.h>
 
 // CPU
-extern void monotoneChain(
+extern void cpuMonotoneChain(
     float *p_x, float *p_y, int N,
     float *result_x, float *result_y, int *M
 );
 
-extern void grahamScan(
+extern void cpuQuickHull(
     float *p_x, float *p_y, int N,
     float *result_x, float *result_y, int *M
 );
@@ -30,7 +30,7 @@ extern "C" void gpuQuickHullSlow(
 
 int main()
 {
-    int N = 24;
+    int N = 10000000;
 
     float *px = (float*) malloc(sizeof(float) * N);
     float *py = (float*) malloc(sizeof(float) * N);
@@ -75,14 +75,14 @@ int main()
     // }
     // printf("]\n");
     printf("Hull size: %d\n", M_cpu);
-    printf("Time: %.3f ms\n", cpu_ms);
+    printf("Time: %.3f ms\n\n", cpu_ms);
 
    cpu_start = std::chrono::high_resolution_clock::now();
-   grahamScan(px, py, N, result_x, result_y, &M_cpu);
+   cpuQuickHull(px, py, N, result_x, result_y, &M_cpu);
    cpu_end = std::chrono::high_resolution_clock::now();
    cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
 
-   printf("CPU Graham scan:\n[");
+   printf("CPU QuickHull:\n[");
 //    for (int i = 0; i < M_cpu; i++) {
 //        printf("(%.3f, %.3f)", result_x[i], result_y[i]);
 //        if (i < M_cpu - 1) printf(", ");
@@ -109,7 +109,7 @@ int main()
     // }
     // printf("]\n");
     printf("Hull size: %d\n", M_gpu);
-    printf("Time: %.3f ms\n", gpu_ms);
+    printf("Time: %.3f ms\n\n", gpu_ms);
 
     /* ================= GPU Slow ================= */
     // Timed run

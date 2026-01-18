@@ -8,7 +8,7 @@ CXXFLAGS  := -O2 -std=c++17 -fPIC
 NVCCFLAGS := -O2 -std=c++17 -lineinfo -arch=sm_86 --ptxas-options=-v --use_fast_math
 
 CPU_SRCS := \
-	cpu_graham.cpp \
+	cpu_quickhull.cpp \
 	cpu_monotone_chain.cpp
 
 GPU_SRCS := \

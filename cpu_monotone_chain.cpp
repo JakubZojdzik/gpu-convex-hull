@@ -7,7 +7,7 @@ static inline float cross(const Point &O, const Point &A, const Point &B) {
          - (A.y - O.y) * (B.x - O.x);
 }
 
-void monotoneChain(float *p_x, float *p_y, int N,
+void cpuMonotoneChain(float *p_x, float *p_y, int N,
                 float *result_x, float *result_y, int *M)
 {
     if (N <= 1) {

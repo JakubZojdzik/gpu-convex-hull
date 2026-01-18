@@ -40,7 +40,7 @@ static void quickHullRec(const vector<Point> &points, const Point &a, const Poin
     quickHullRec(points_above, points[idx], b, side, hull);
 }
 
-void quickHull(float *p_x, float *p_y, int N, float *result_x, float *result_y, int *M) {
+void cpuQuickHull(float *p_x, float *p_y, int N, float *result_x, float *result_y, int *M) {
     if (N <= 3) {
         for (int i = 0; i < N; i++) {
             result_x[i] = p_x[i];
