@@ -22,29 +22,11 @@ extern "C" void gpuQuickHull(
     float *result_x, float *result_y, int *M
 );
 
-static int countUniquePoints(const float *x,
-                             const float *y,
-                             int n,
-                             float eps = 1e-6f)
-{
-    if (n == 0) return 0;
+extern "C" void gpuQuickHullSlow(
+    float *p_x, float *p_y, int N,
+    float *result_x, float *result_y, int *M
+);
 
-    int unique = 0;
-
-    for (int i = 0; i < n; i++) {
-        bool is_new = true;
-        for (int j = 0; j < i; j++) {
-            if (fabs(x[i] - x[j]) <= eps &&
-                fabs(y[i] - y[j]) <= eps)
-            {
-                is_new = false;
-                break;
-            }
-        }
-        if (is_new) unique++;
-    }
-    return unique;
-}
 
 int main()
 {
@@ -92,24 +74,22 @@ int main()
     //     if (i < M_cpu - 1) printf(", ");
     // }
     // printf("]\n");
-    int unique_cpu = countUniquePoints(result_x, result_y, M_cpu);
-    printf("Unique hull points: %d\n", unique_cpu);
     printf("Hull size: %d\n", M_cpu);
     printf("Time: %.3f ms\n", cpu_ms);
 
-//    cpu_start = std::chrono::high_resolution_clock::now();
-//    grahamScan(px, py, N, result_x, result_y, &M_cpu);
-//    cpu_end = std::chrono::high_resolution_clock::now();
-//    cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
-//
-//    printf("CPU Graham scan:\n[");
+   cpu_start = std::chrono::high_resolution_clock::now();
+   grahamScan(px, py, N, result_x, result_y, &M_cpu);
+   cpu_end = std::chrono::high_resolution_clock::now();
+   cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
+
+   printf("CPU Graham scan:\n[");
 //    for (int i = 0; i < M_cpu; i++) {
 //        printf("(%.3f, %.3f)", result_x[i], result_y[i]);
 //        if (i < M_cpu - 1) printf(", ");
 //    }
 //    printf("]\n");
-//    printf("Hull size: %d\n", M_cpu);
-//    printf("Time: %.3f ms\n\n", cpu_ms);
+   printf("Hull size: %d\n", M_cpu);
+   printf("Time: %.3f ms\n\n", cpu_ms);
 
     /* ================= GPU ================= */
     // Timed run
@@ -128,8 +108,25 @@ int main()
     //     if (i < M_gpu - 1) printf(", ");
     // }
     // printf("]\n");
-    int unique_gpu = countUniquePoints(result_x, result_y, M_gpu);
-    printf("Unique hull points: %d\n", unique_gpu);
+    printf("Hull size: %d\n", M_gpu);
+    printf("Time: %.3f ms\n", gpu_ms);
+
+    /* ================= GPU Slow ================= */
+    // Timed run
+    memset(result_x, 0, sizeof(float) * N);
+    memset(result_y, 0, sizeof(float) * N);
+    gpu_start = std::chrono::high_resolution_clock::now();
+    gpuQuickHullSlow(px, py, N, result_x, result_y, &M_gpu);
+    cudaDeviceSynchronize();
+    gpu_end = std::chrono::high_resolution_clock::now();
+    gpu_ms = std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
+    printf("GPU Slow QuickHull:\n");
+    // printf("[");
+    // for (int i = 0; i < M_gpu; i++) {
+    //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
+    //     if (i < M_gpu - 1) printf(", ");
+    // }
+    // printf("]\n");
     printf("Hull size: %d\n", M_gpu);
     printf("Time: %.3f ms\n", gpu_ms);
 

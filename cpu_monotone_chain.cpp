@@ -2,7 +2,6 @@
 #include "utils.h"
 using namespace std;
 
-// Cross product (OA x OB)
 static inline float cross(const Point &O, const Point &A, const Point &B) {
     return (A.x - O.x) * (B.y - O.y)
          - (A.y - O.y) * (B.x - O.x);
@@ -24,7 +23,6 @@ void monotoneChain(float *p_x, float *p_y, int N,
     for (int i = 0; i < N; i++)
         pts[i] = {p_x[i], p_y[i]};
 
-    // Sort lexicographically (x, then y)
     sort(pts.begin(), pts.end(), [](const Point &a, const Point &b) {
         if (a.x != b.x) return a.x < b.x;
         return a.y < b.y;
@@ -61,7 +59,6 @@ void monotoneChain(float *p_x, float *p_y, int N,
         hull.push_back(p);
     }
 
-    // Remove duplicate last point
     if (!hull.empty())
         hull.pop_back();
 
