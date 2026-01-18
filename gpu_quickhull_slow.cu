@@ -40,7 +40,7 @@ struct MaxXOp {
 };
 
 
-__global__ void buildPointArray(const float *px,
+static __global__ void buildPointArray(const float *px,
                                 const float *py,
                                 MinMaxPoint *out,
                                 int n)
@@ -53,7 +53,7 @@ __global__ void buildPointArray(const float *px,
     }
 }
 
-void findMinMaxX_CUB(const float *d_px,
+static void findMinMaxX_CUB(const float *d_px,
                      const float *d_py,
                      int n,
                      MinMaxPoint &h_min,
@@ -224,7 +224,7 @@ __global__ void compactPointsKernel(float *px, float *py,
     }
 }
 
-void cubExclusiveScanInt(int *d_input, int *d_output, int n) {
+static void cubExclusiveScanInt(int *d_input, int *d_output, int n) {
     void *d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
     cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_input, d_output, n);
@@ -234,7 +234,7 @@ void cubExclusiveScanInt(int *d_input, int *d_output, int n) {
 }
 
 
-void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
+static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
                           float leftX, float leftY, float rightX, float rightY,
                           std::vector<Point> &hullPoints) {
     if (n == 0) return;
@@ -282,7 +282,6 @@ void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         std::vector<Partition> newPartitions;
         std::vector<float> allNewPx, allNewPy;
         
-        int partIdx = 0;
         for (size_t p = 0; p < partitions.size(); p++) {
             Partition &part = partitions[p];
             Point &L = ans[p];
