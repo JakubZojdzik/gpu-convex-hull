@@ -31,7 +31,7 @@ void monotoneChain(float *p_x, float *p_y, int N,
     vector<Point> hull;
     hull.reserve(2 * N);
 
-    constexpr float EPS = 1e-6f;
+    constexpr float EPS = 1e-39f; // subnormal
 
     // Lower hull
     for (const Point &p : pts) {
