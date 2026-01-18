@@ -63,7 +63,7 @@ int main()
 
     /* ================= CPU ================= */
     auto cpu_start = std::chrono::high_resolution_clock::now();
-    monotoneChain(px, py, N, result_x, result_y, &M_cpu);
+    cpuMonotoneChain(px, py, N, result_x, result_y, &M_cpu);
     auto cpu_end = std::chrono::high_resolution_clock::now();
     double cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
 
