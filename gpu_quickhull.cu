@@ -177,7 +177,7 @@ void segmentedMaxDistReduce(
     fprintf(stderr, "1. offfsets:\n");
     for(int i = 0; i < numSegments; i++)
         fprintf(stderr, "%d, ", h_offsets[i]);
-    fprintf("\n\n");
+    fprintf(stderr, "\n\n");
 
 
     int numBlocksSegments = (numSegments + BLOCK_SIZE - 1) / BLOCK_SIZE;
@@ -187,7 +187,7 @@ void segmentedMaxDistReduce(
     fprintf(stderr, "2. offfsets:\n");
     for(int i = 0; i < numSegments; i++)
         fprintf(stderr, "%d, ", h_offsets[i]);
-    fprintf("\n\n");
+    fprintf(stderr, "\n\n");
 
     // for (int i = numSegments-1; i >= 1; i--) {
     //     if (h_offsets[i] == -1) {
