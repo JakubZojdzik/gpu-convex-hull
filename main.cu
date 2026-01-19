@@ -27,11 +27,6 @@ extern "C" void gpuQuickHullnaive(
     float *result_x, float *result_y, int *M
 );
 
-extern "C" void gpuQuickHullPaper(
-    float *p_x, float *p_y, int N,
-    float *result_x, float *result_y, int *M
-);
-
 // Visualizer
 extern "C" void visualizeConvexHull(float* input_x, float* input_y, int num_points,
                                      float* hull_x, float* hull_y, int hull_size,
@@ -87,19 +82,6 @@ int main()
     printf("Hull size: %d\n", M_cpu);
     printf("Time: %.3f ms\n\n", cpu_ms);
 
-   cpu_start = std::chrono::high_resolution_clock::now();
-   cpuQuickHull(px, py, N, result_x, result_y, &M_cpu);
-   cpu_end = std::chrono::high_resolution_clock::now();
-   cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
-
-   printf("CPU QuickHull:\n[");
-//    for (int i = 0; i < M_cpu; i++) {
-//        printf("(%.3f, %.3f)", result_x[i], result_y[i]);
-//        if (i < M_cpu - 1) printf(", ");
-//    }
-//    printf("]\n");
-   printf("Hull size: %d\n", M_cpu);
-   printf("Time: %.3f ms\n\n", cpu_ms);
 
     /* ================= GPU ================= */
     // Timed run
@@ -141,12 +123,9 @@ int main()
     printf("Hull size: %d\n", M_gpu);
     printf("Time: %.3f ms\n\n", gpu_ms);
 
-
-     // Visualize the result
-    printf("Creating visualization...\n");
-    visualizeConvexHull(px, py, N, result_x, result_y, M_gpu, "convex_hull_visualization");
-
-
+    // Visualize the result
+    // printf("Creating visualization...\n");
+    // visualizeConvexHull(px, py, N, result_x, result_y, M_gpu, "convex_hull_visualization");
 
     free(px);
     free(py);
