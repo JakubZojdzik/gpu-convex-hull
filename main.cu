@@ -6,6 +6,7 @@
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
 
+#define PI 3.14159265358979323846f
 
 // CPU
 extern void cpuMonotoneChain(
@@ -44,7 +45,7 @@ __global__ void generate_points(float *px, float *py, int N, unsigned long long 
 
     // Generate uniform random numbers
     float u = curand_uniform(&state);        // [0,1)
-    float theta = curand_uniform(&state) * 2.0f * CUDART_PI_F;
+    float theta = curand_uniform(&state) * 2.0f * PI;
 
     // Map to circle
     float r = sqrtf(u);
