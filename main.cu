@@ -22,10 +22,20 @@ extern "C" void gpuQuickHull(
     float *result_x, float *result_y, int *M
 );
 
-extern "C" void gpuQuickHullSlow(
+extern "C" void gpuQuickHullnaive(
     float *p_x, float *p_y, int N,
     float *result_x, float *result_y, int *M
 );
+
+extern "C" void gpuQuickHullPaper(
+    float *p_x, float *p_y, int N,
+    float *result_x, float *result_y, int *M
+);
+
+// Visualizer
+extern "C" void visualizeConvexHull(float* input_x, float* input_y, int num_points,
+                                     float* hull_x, float* hull_y, int hull_size,
+                                     const char* output_filename);
 
 
 int main()
@@ -111,16 +121,20 @@ int main()
     printf("Hull size: %d\n", M_gpu);
     printf("Time: %.3f ms\n\n", gpu_ms);
 
-    /* ================= GPU Slow ================= */
+    // Visualize the result
+    printf("Creating visualization...\n");
+    visualizeConvexHull(px, py, N, result_x, result_y, M_gpu, "convex_hull_visualization");
+
+    /* ================= GPU naive ================= */
     // Timed run
     memset(result_x, 0, sizeof(float) * N);
     memset(result_y, 0, sizeof(float) * N);
     gpu_start = std::chrono::high_resolution_clock::now();
-    gpuQuickHullSlow(px, py, N, result_x, result_y, &M_gpu);
+    gpuQuickHullnaive(px, py, N, result_x, result_y, &M_gpu);
     cudaDeviceSynchronize();
     gpu_end = std::chrono::high_resolution_clock::now();
     gpu_ms = std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
-    printf("GPU Slow QuickHull:\n");
+    printf("GPU naive QuickHull:\n");
     // printf("[");
     // for (int i = 0; i < M_gpu; i++) {
     //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
@@ -128,7 +142,26 @@ int main()
     // }
     // printf("]\n");
     printf("Hull size: %d\n", M_gpu);
-    printf("Time: %.3f ms\n", gpu_ms);
+    printf("Time: %.3f ms\n\n", gpu_ms);
+
+    /* ================= GPU Paper Implementation ================= */
+    // Timed run
+    memset(result_x, 0, sizeof(float) * N);
+    memset(result_y, 0, sizeof(float) * N);
+    gpu_start = std::chrono::high_resolution_clock::now();
+    gpuQuickHullPaper(px, py, N, result_x, result_y, &M_gpu);
+    cudaDeviceSynchronize();
+    gpu_end = std::chrono::high_resolution_clock::now();
+    gpu_ms = std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
+    printf("GPU Paper QuickHull:\n");
+    // printf("[");
+    // for (int i = 0; i < M_gpu; i++) {
+    //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
+    //     if (i < M_gpu - 1) printf(", ");
+    // }
+    // printf("]\n");
+    printf("Hull size: %d\n", M_gpu);
+    printf("Time: %.3f ms\n\n", gpu_ms);
 
     free(px);
     free(py);

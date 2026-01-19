@@ -12,8 +12,10 @@ CPU_SRCS := \
 	cpu_monotone_chain.cpp
 
 GPU_SRCS := \
-	gpu_quickhull_slow.cu \
-	gpu_quickhull.cu
+	gpu_quickhull_naive.cu \
+	gpu_quickhull.cu \
+	gpu_quickhull_paper.cu \
+	visualizer.cu
 
 CPU_OBJS  := $(CPU_SRCS:.cpp=.o)
 GPU_OBJS  := $(GPU_SRCS:.cu=.o)
