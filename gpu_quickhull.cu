@@ -415,6 +415,11 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     float *d_px_new, *d_py_new;
     int *d_labels_new;
     int maxAnsSize = n + 1;
+    int *d_segmentOffsets;
+    DistIdxPair *d_maxPerSegment;
+    int *d_statePrefixSum;
+    int *d_newLabels, *d_keepFlags, *d_scatterIdx;
+    int *d_labelCounts, *d_labelOffsets, *d_labelCounters;
 
     float *h_ansX, *h_ansY;
     h_ansX = (float*)malloc(maxAnsSize * sizeof(float));
@@ -477,8 +482,6 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_ansX, d_ansY, ansSize,
             d_distances, currentN);
 
-        int *d_segmentOffsets;
-        DistIdxPair *d_maxPerSegment;
         cudaMemset(d_segmentOffsets, -1, (numLabels + 1) * sizeof(int));
         
         segmentedMaxDistReduce(d_distances, d_labels, d_segmentOffsets, 
@@ -490,7 +493,6 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaMemset(d_goesRight, 0, currentN * sizeof(int));
         determineSide<<<numBlocks, BLOCK_SIZE>>>(d_px, d_py, d_labels, d_ansX, d_ansY, d_state, d_maxPerSegment, d_goesLeft, d_goesRight, currentN);
 
-        int *d_statePrefixSum;
         cubExclusiveScanInt(d_state, d_statePrefixSum, numLabels);
 
         int lastState, lastStatePrefixSum;
@@ -504,7 +506,6 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             break;
         }
         
-        int *d_newLabels, *d_keepFlags, *d_scatterIdx;
         cudaMemset(d_keepFlags, 0, currentN * sizeof(int));
         
         computeNewLabelsKernel<<<numBlocks, BLOCK_SIZE>>>(
@@ -512,7 +513,6 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_goesLeft, d_goesRight,
             d_newLabels, d_keepFlags, currentN);
         
-        int *d_labelCounts, *d_labelOffsets, *d_labelCounters;
         cudaMemset(d_labelCounts, 0, newNumLabels * sizeof(int));
         cudaMemset(d_labelCounters, 0, newNumLabels * sizeof(int));
         
