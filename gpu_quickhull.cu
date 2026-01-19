@@ -145,6 +145,14 @@ __global__ void findSegmentOffsetsKernel(const int *labels, int *offsets, int nu
     
     if (i < n - 1 && labels[i] != labels[i + 1])
         offsets[labels[i + 1]] = i + 1;
+
+    cudaDeviceSynchronize();
+
+    if(i < numSegments && i > 0 && offsets[i] == -1 && offsets[i+1] != -1) {
+        for(int j = i; offsets[j] == -1 && j > 0; j--) {
+            offsets[j] = offsets[i+1];
+        }
+    }
 }
 
 
@@ -162,14 +170,14 @@ void segmentedMaxDistReduce(
         d_labels, d_segmentOffsets, numSegments, n);
     cudaDeviceSynchronize();
 
-    int h_offsets[numSegments + 1];
-    cudaMemcpy(h_offsets, d_segmentOffsets, (numSegments + 1) * sizeof(int), cudaMemcpyDeviceToHost);
-    for (int i = numSegments-1; i >= 1; i--) {
-        if (h_offsets[i] == -1) {
-            h_offsets[i] = h_offsets[i + 1];
-        }
-    }
-    cudaMemcpy(d_segmentOffsets, h_offsets, (numSegments + 1) * sizeof(int), cudaMemcpyHostToDevice);
+    // int h_offsets[numSegments + 1];
+    // cudaMemcpy(h_offsets, d_segmentOffsets, (numSegments + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+    // for (int i = numSegments-1; i >= 1; i--) {
+    //     if (h_offsets[i] == -1) {
+    //         h_offsets[i] = h_offsets[i + 1];
+    //     }
+    // }
+    // cudaMemcpy(d_segmentOffsets, h_offsets, (numSegments + 1) * sizeof(int), cudaMemcpyHostToDevice);
     
     DistIdxPair *d_pairs;
     cudaMalloc(&d_pairs, n * sizeof(DistIdxPair));
