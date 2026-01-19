@@ -171,12 +171,24 @@ void segmentedMaxDistReduce(
     findSegmentOffsetsKernel<<<numBlocks, BLOCK_SIZE>>>(
         d_labels, d_segmentOffsets, numSegments, n);
     cudaDeviceSynchronize();
+    int h_offsets[numSegments + 1];
+
+    cudaMemcpy(h_offsets, d_segmentOffsets, (numSegments + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+    fprintf(stderr, "1. offfsets:\n");
+    for(int i = 0; i < numSegments; i++)
+        fprintf(stderr, "%d, ", h_offsets[i]);
+    fprintf("\n\n");
+
 
     int numBlocksSegments = (numSegments + BLOCK_SIZE - 1) / BLOCK_SIZE;
     fillOffsets<<<numBlocksSegments, BLOCK_SIZE>>>(d_segmentOffsets, numSegments);
 
-    // int h_offsets[numSegments + 1];
-    // cudaMemcpy(h_offsets, d_segmentOffsets, (numSegments + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_offsets, d_segmentOffsets, (numSegments + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+    fprintf(stderr, "2. offfsets:\n");
+    for(int i = 0; i < numSegments; i++)
+        fprintf(stderr, "%d, ", h_offsets[i]);
+    fprintf("\n\n");
+
     // for (int i = numSegments-1; i >= 1; i--) {
     //     if (h_offsets[i] == -1) {
     //         h_offsets[i] = h_offsets[i + 1];
