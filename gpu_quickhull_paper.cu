@@ -115,19 +115,19 @@ static void findMinMaxX_CUB(const float *d_px,
 }
 
 // Pair of distance and point index
-struct DistIdxPair {
+struct DistIdxPairPaper {
     float dist;
     int   idx;
 };
 
-struct MaxDistOp {
+struct MaxDistOpPaper {
     __host__ __device__
-    DistIdxPair operator()(const DistIdxPair &a, const DistIdxPair &b) const {
+    DistIdxPairPaper operator()(const DistIdxPairPaper &a, const DistIdxPairPaper &b) const {
         return (a.dist >= b.dist) ? a : b;
     }
 };
 
-__global__ void buildDistIdxArray(const float *distances, DistIdxPair *pairs, int n) {
+static __global__ void buildDistIdxArrayPaper(const float *distances, DistIdxPairPaper *pairs, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
         pairs[i].dist = distances[i];
@@ -136,7 +136,7 @@ __global__ void buildDistIdxArray(const float *distances, DistIdxPair *pairs, in
 }
 
 // GPU kernel to find segment offsets - no host involvement
-__global__ void findSegmentOffsetsKernel(const int *labels, int *offsets, int numSegments, int n) {
+static __global__ void findSegmentOffsetsKernelPaper(const int *labels, int *offsets, int numSegments, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     
     if (i == 0) {
@@ -150,7 +150,7 @@ __global__ void findSegmentOffsetsKernel(const int *labels, int *offsets, int nu
 }
 
 // GPU kernel to fix empty segments (propagate offsets backwards)
-__global__ void fixEmptySegmentsKernel(int *offsets, int numSegments) {
+static __global__ void fixEmptySegmentsKernel(int *offsets, int numSegments) {
     // Single thread fixes empty segments - for small numSegments this is fine
     // For large numSegments, a parallel scan-based approach would be better
     if (threadIdx.x == 0 && blockIdx.x == 0) {
@@ -162,12 +162,12 @@ __global__ void fixEmptySegmentsKernel(int *offsets, int numSegments) {
     }
 }
 
-void segmentedMaxDistReduce(
+static void segmentedMaxDistReducePaper(
     const float *d_distances,
     const int *d_labels,
     int *d_segmentOffsets,
-    DistIdxPair *d_maxPerSegment,
-    DistIdxPair *d_pairs,
+    DistIdxPairPaper *d_maxPerSegment,
+    DistIdxPairPaper *d_pairs,
     void *d_tempStorage,
     size_t tempStorageBytes,
     int n,
@@ -178,26 +178,26 @@ void segmentedMaxDistReduce(
     // Initialize offsets to -1 for empty segment detection
     cudaMemset(d_segmentOffsets, -1, (numSegments + 1) * sizeof(int));
     
-    findSegmentOffsetsKernel<<<numBlocks, BLOCK_SIZE>>>(
+    findSegmentOffsetsKernelPaper<<<numBlocks, BLOCK_SIZE>>>(
         d_labels, d_segmentOffsets, numSegments, n);
     
     // Fix empty segments entirely on GPU
     fixEmptySegmentsKernel<<<1, 1>>>(d_segmentOffsets, numSegments);
     
-    buildDistIdxArray<<<numBlocks, BLOCK_SIZE>>>(d_distances, d_pairs, n);
+    buildDistIdxArrayPaper<<<numBlocks, BLOCK_SIZE>>>(d_distances, d_pairs, n);
     
-    DistIdxPair identity{0.0f, -1};
+    DistIdxPairPaper identity{0.0f, -1};
     
     cub::DeviceSegmentedReduce::Reduce(
         d_tempStorage, tempStorageBytes,
         d_pairs, d_maxPerSegment,
         numSegments,
         d_segmentOffsets, d_segmentOffsets + 1,
-        MaxDistOp(), identity);
+        MaxDistOpPaper(), identity);
 }
 
 
-__global__ void computeDistancesKernel(float *px, float *py, int *labels,
+static __global__ void computeDistancesKernelPaper(float *px, float *py, int *labels,
                                         float *ansX, float *ansY, int ansSize,
                                         float *distances, int n) {
     // Shared memory for ANS array - only load what's needed for this block
@@ -255,9 +255,9 @@ __global__ void computeDistancesKernel(float *px, float *py, int *labels,
 
 // Determine which side each point goes to (left or right of max point)
 // Also marks the max point for each segment
-__global__ void determineSideKernel(float *px, float *py, int *labels,
+static __global__ void determineSideKernel(float *px, float *py, int *labels,
                                     float *ansX, float *ansY, 
-                                    DistIdxPair *maxIdxPerLabel,
+                                    DistIdxPairPaper *maxIdxPerLabel,
                                     int *goesLeft, int *goesRight, 
                                     int *isMaxPoint, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -312,7 +312,7 @@ __global__ void determineSideKernel(float *px, float *py, int *labels,
 }
 
 // Compute state array: state[label] = 1 if label has a valid max point
-__global__ void computeStateKernel(DistIdxPair *maxIdxPerLabel, int *state, int numLabels) {
+static __global__ void computeStateKernel(DistIdxPairPaper *maxIdxPerLabel, int *state, int numLabels) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numLabels) return;
     
@@ -321,7 +321,7 @@ __global__ void computeStateKernel(DistIdxPair *maxIdxPerLabel, int *state, int 
 
 // Key insight from paper: use head flags for segmented scan
 // Head flag is 1 at the start of each segment
-__global__ void computeHeadFlagsKernel(int *labels, int *headFlags, int n) {
+static __global__ void computeHeadFlagsKernel(int *labels, int *headFlags, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
     
@@ -348,7 +348,7 @@ struct SegmentedSumOp {
 
 // Compute the new label for each point based on prefix sums
 // Paper approach 7b-7c: use prefix scans to compute output positions
-__global__ void computeNewLabelsAndPositionsKernel(
+static __global__ void computeNewLabelsAndPositionsKernel(
     int *labels, int *statePrefixSum,
     int *goesLeft, int *goesRight,
     int *leftScanResult, int *rightScanResult,
@@ -387,7 +387,7 @@ __global__ void computeNewLabelsAndPositionsKernel(
 }
 
 // Compute per-segment counts using the last value in each segment
-__global__ void extractSegmentCountsKernel(
+static __global__ void extractSegmentCountsKernel(
     int *goesLeft, int *goesRight,
     int *leftScan, int *rightScan,
     int *labels,
@@ -409,7 +409,7 @@ __global__ void extractSegmentCountsKernel(
 }
 
 // Compute output offsets for each new label
-__global__ void computeLabelOffsetsKernel(
+static __global__ void computeLabelOffsetsKernel(
     int *leftCounts, int *rightCounts,
     int *state, int *statePrefixSum,
     int *labelOffsets,
@@ -430,7 +430,7 @@ __global__ void computeLabelOffsetsKernel(
 }
 
 // Final scatter kernel - moves points to their new positions
-__global__ void scatterPointsKernel(
+static __global__ void scatterPointsKernel(
     float *pxIn, float *pyIn, int *labelsIn,
     float *pxOut, float *pyOut, int *labelsOut,
     int *newLabels, int *outputPositions, int *keepFlags,
@@ -452,11 +452,11 @@ __global__ void scatterPointsKernel(
 }
 
 // Build new ANS array with inserted max points
-__global__ void buildNewAnsKernel(float *oldAnsX, float *oldAnsY,
+static __global__ void buildNewAnsKernelPaper(float *oldAnsX, float *oldAnsY,
                                    float *newAnsX, float *newAnsY,
                                    float *px, float *py,
                                    int *state, int *statePrefixSum,
-                                   DistIdxPair *maxPerSegment,
+                                   DistIdxPairPaper *maxPerSegment,
                                    int numLabels) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i > numLabels) return;
@@ -482,20 +482,20 @@ __global__ void buildNewAnsKernel(float *oldAnsX, float *oldAnsY,
 }
 
 // Helper for CUB exclusive scan
-static void cubExclusiveScanInt(int *d_input, int *d_output, int n, 
+static void cubExclusiveScanIntPaper(int *d_input, int *d_output, int n, 
                                  void *d_temp, size_t tempBytes) {
     cub::DeviceScan::ExclusiveSum(d_temp, tempBytes, d_input, d_output, n);
 }
 
 // Segmented exclusive scan using CUB
 // Uses head flags to reset sum at segment boundaries
-__global__ void prepareForSegmentedScan(int *values, int *headFlags, int2 *pairs, int n) {
+static __global__ void prepareForSegmentedScan(int *values, int *headFlags, int2 *pairs, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
     pairs[idx] = make_int2(values[idx], headFlags[idx]);
 }
 
-__global__ void extractSegmentedScanResult(int2 *pairs, int *result, int n) {
+static __global__ void extractSegmentedScanResult(int2 *pairs, int *result, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
     result[idx] = pairs[idx].x;
@@ -503,7 +503,7 @@ __global__ void extractSegmentedScanResult(int2 *pairs, int *result, int n) {
 
 // Custom segmented scan implementation using head flags
 // For each segment, computes exclusive prefix sum that resets at boundaries
-void segmentedExclusiveScan(int *d_values, int *d_headFlags, int *d_output,
+static void segmentedExclusiveScan(int *d_values, int *d_headFlags, int *d_output,
                             int2 *d_pairs, void *d_temp, size_t tempBytes, int n) {
     int numBlocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     
@@ -535,8 +535,8 @@ struct QuickHullWorkspace {
     
     // Per-segment arrays
     int *d_segmentOffsets;
-    DistIdxPair *d_maxPerSegment;
-    DistIdxPair *d_pairs;
+    DistIdxPairPaper *d_maxPerSegment;
+    DistIdxPairPaper *d_pairs;
     int *d_state, *d_statePrefixSum;
     int *d_leftCounts, *d_rightCounts;
     int *d_labelOffsets, *d_labelWriteOffsets;
@@ -577,11 +577,11 @@ void allocateWorkspace(QuickHullWorkspace &ws, int n) {
     cudaMalloc(&ws.d_keepFlags, n * sizeof(int));
     cudaMalloc(&ws.d_isMaxPoint, n * sizeof(int));
     cudaMalloc(&ws.d_scanPairs, n * sizeof(int2));
-    cudaMalloc(&ws.d_pairs, n * sizeof(DistIdxPair));
+    cudaMalloc(&ws.d_pairs, n * sizeof(DistIdxPairPaper));
     
     // Per-segment arrays
     cudaMalloc(&ws.d_segmentOffsets, (ws.maxLabels + 1) * sizeof(int));
-    cudaMalloc(&ws.d_maxPerSegment, ws.maxLabels * sizeof(DistIdxPair));
+    cudaMalloc(&ws.d_maxPerSegment, ws.maxLabels * sizeof(DistIdxPairPaper));
     cudaMalloc(&ws.d_state, ws.maxLabels * sizeof(int));
     cudaMalloc(&ws.d_statePrefixSum, ws.maxLabels * sizeof(int));
     cudaMalloc(&ws.d_leftCounts, ws.maxLabels * sizeof(int));
@@ -606,10 +606,10 @@ void allocateWorkspace(QuickHullWorkspace &ws, int n) {
     cub::DeviceScan::ExclusiveScan(nullptr, tempBytes2, ws.d_scanPairs, ws.d_scanPairs, 
                                     SegmentedSumOp(), make_int2(0, 0), n);
     
-    DistIdxPair identity{0.0f, -1};
+    DistIdxPairPaper identity{0.0f, -1};
     cub::DeviceSegmentedReduce::Reduce(nullptr, tempBytes3, ws.d_pairs, ws.d_maxPerSegment,
                                         ws.maxLabels, ws.d_segmentOffsets, ws.d_segmentOffsets + 1,
-                                        MaxDistOp(), identity);
+                                        MaxDistOpPaper(), identity);
     
     ws.tempStorageBytes = std::max({tempBytes1, tempBytes2, tempBytes3});
     cudaMalloc(&ws.d_tempStorage, ws.tempStorageBytes);
@@ -637,7 +637,7 @@ void freeWorkspace(QuickHullWorkspace &ws) {
 }
 
 // Compute segment write offsets from per-segment counts
-__global__ void computeSegmentWriteOffsetsKernel(
+static __global__ void computeSegmentWriteOffsetsKernel(
     int *leftCounts, int *rightCounts,
     int *state, int *statePrefixSum,
     int *writeOffsets,
@@ -690,13 +690,13 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         
         // Step 1: Compute distances for all points
         size_t sharedMemSize = 2 * (BLOCK_SIZE + 2) * sizeof(float);
-        computeDistancesKernel<<<numBlocks, BLOCK_SIZE, sharedMemSize>>>(
+        computeDistancesKernelPaper<<<numBlocks, BLOCK_SIZE, sharedMemSize>>>(
             d_px, d_py, d_labels,
             ws.d_ansX, ws.d_ansY, ansSize,
             ws.d_distances, currentN);
         
         // Step 2: Segmented max reduction to find max point per segment
-        segmentedMaxDistReduce(ws.d_distances, d_labels, ws.d_segmentOffsets,
+        segmentedMaxDistReducePaper(ws.d_distances, d_labels, ws.d_segmentOffsets,
                                ws.d_maxPerSegment, ws.d_pairs, 
                                ws.d_tempStorage, ws.tempStorageBytes,
                                currentN, numLabels);
@@ -779,7 +779,7 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         // Build new ANS array
         int newAnsSize = ansSize + numNewHullPoints;
         int ansBlocks = (numLabels + 2 + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        buildNewAnsKernel<<<ansBlocks, BLOCK_SIZE>>>(
+        buildNewAnsKernelPaper<<<ansBlocks, BLOCK_SIZE>>>(
             ws.d_ansX, ws.d_ansY, ws.d_newAnsX, ws.d_newAnsY,
             d_px, d_py, ws.d_state, ws.d_statePrefixSum, ws.d_maxPerSegment, numLabels);
         
