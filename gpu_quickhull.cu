@@ -208,10 +208,10 @@ void segmentedMaxDistReduce(
 
 __global__ void computeDistancesKernel(float *px, float *py, int *labels,
                                         float *ansX, float *ansY, int ansSize,
-                                        float *distances, int n) {
+                                        float *distances, int n, int sharedAnsHalfSize) {
     extern __shared__ float sharedAns[];
     float *sAnsX = sharedAns;
-    float *sAnsY = &sharedAns[BLOCK_SIZE + 2];
+    float *sAnsY = &sharedAns[sharedAnsHalfSize];
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int tid = threadIdx.x;
@@ -234,7 +234,7 @@ __global__ void computeDistancesKernel(float *px, float *py, int *labels,
     // Load required ANS entries into shared memory
     // indexes [minLabel, maxLabel+1] from ANS
     int ansRange = maxLabel - minLabel + 2;
-    if (tid < ansRange) {
+    if (tid < ansRange && tid < sharedAnsHalfSize) {
         if ((minLabel + tid) >= ansSize) {
             return;
         }
@@ -446,11 +446,13 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     while (true) {
         int numBlocks = (currentN + BLOCK_SIZE - 1) / BLOCK_SIZE;
         
-        size_t sharedMemSize = 2 * (BLOCK_SIZE + 2) * sizeof(float);
+        // Shared memory needs to hold up to (numLabels + 2) entries for both X and Y
+        int sharedAnsHalfSize = numLabels + 2;
+        size_t sharedMemSize = 2 * sharedAnsHalfSize * sizeof(float);
         computeDistancesKernel<<<numBlocks, BLOCK_SIZE, sharedMemSize>>>(
             d_px, d_py, d_labels,
             d_ansX, d_ansY, ansSize,
-            d_distances, currentN);
+            d_distances, currentN, sharedAnsHalfSize);
 
         int *d_segmentOffsets;
         DistIdxPair *d_maxPerSegment;
