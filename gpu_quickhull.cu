@@ -172,29 +172,9 @@ void segmentedMaxDistReduce(
         d_labels, d_segmentOffsets, numSegments, n);
     cudaDeviceSynchronize();
 
-    cudaMemcpy(h_offsets, d_segmentOffsets, (numSegments + 1) * sizeof(int), cudaMemcpyDeviceToHost);
-    fprintf(stderr, "1. offfsets:\n");
-    for(int i = 0; i < numSegments; i++)
-        fprintf(stderr, "%d, ", h_offsets[i]);
-    fprintf(stderr, "\n\n");
-
-
     int numBlocksSegments = (numSegments + BLOCK_SIZE - 1) / BLOCK_SIZE;
     fillOffsets<<<numBlocksSegments, BLOCK_SIZE>>>(d_segmentOffsets, numSegments);
 
-    cudaMemcpy(h_offsets, d_segmentOffsets, (numSegments + 1) * sizeof(int), cudaMemcpyDeviceToHost);
-    fprintf(stderr, "2. offfsets:\n");
-    for(int i = 0; i < numSegments; i++)
-        fprintf(stderr, "%d, ", h_offsets[i]);
-    fprintf(stderr, "\n\n");
-
-    // for (int i = numSegments-1; i >= 1; i--) {
-    //     if (h_offsets[i] == -1) {
-    //         h_offsets[i] = h_offsets[i + 1];
-    //     }
-    // }
-    // cudaMemcpy(d_segmentOffsets, h_offsets, (numSegments + 1) * sizeof(int), cudaMemcpyHostToDevice);
-    
     DistIdxPair *d_pairs;
     cudaMalloc(&d_pairs, n * sizeof(DistIdxPair));
     buildDistIdxArray<<<numBlocks, BLOCK_SIZE>>>(d_distances, d_pairs, n);
@@ -431,15 +411,17 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     float *d_ansX, *d_ansY;
     int *d_state;
     int *d_goesLeft, *d_goesRight;
-    float *d_newAnsX, *d_newAnsY;
-    float *d_px_new, *d_py_new;
-    int *d_labels_new;
+
+    cudaMalloc(&d_px, n * sizeof(float));
+    cudaMalloc(&d_py, n * sizeof(float));
+    cudaMalloc(&d_distances, n * sizeof(float));
+    cudaMalloc(&d_labels, n * sizeof(int));
+
+    cudaMemcpy(d_px, h_px, n * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_py, h_py, n * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemset(d_labels, 0, n * sizeof(int));
+
     int maxAnsSize = n + 1;
-    int *d_segmentOffsets;
-    DistIdxPair *d_maxPerSegment;
-    int *d_statePrefixSum;
-    int *d_newLabels, *d_keepFlags, *d_scatterIdx;
-    int *d_labelCounts, *d_labelOffsets, *d_labelCounters;
 
     float *h_ansX, *h_ansY;
     h_ansX = (float*)malloc(maxAnsSize * sizeof(float));
@@ -453,39 +435,11 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     int numLabels = 1;
     int ansSize = 2;
 
-    cudaMalloc(&d_px, n * sizeof(float));
-    cudaMalloc(&d_py, n * sizeof(float));
-    cudaMalloc(&d_distances, n * sizeof(float));
-    cudaMalloc(&d_labels, n * sizeof(int));
-
-    cudaMemcpy(d_px, h_px, n * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_py, h_py, n * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemset(d_labels, 0, n * sizeof(int));
-
     cudaMalloc(&d_ansX, maxAnsSize * sizeof(float));
     cudaMalloc(&d_ansY, maxAnsSize * sizeof(float));
     cudaMemcpy(d_ansX, h_ansX, ansSize * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_ansY, h_ansY, ansSize * sizeof(float), cudaMemcpyHostToDevice);
 
-    cudaMalloc(&d_state, maxAnsSize * sizeof(int));
-    cudaMalloc(&d_goesLeft, n * sizeof(int));
-    cudaMalloc(&d_goesRight, n * sizeof(int));
-
-    cudaMalloc(&d_segmentOffsets, (maxAnsSize + 1) * sizeof(int));
-    cudaMalloc(&d_maxPerSegment, maxAnsSize * sizeof(DistIdxPair));
-    cudaMalloc(&d_statePrefixSum, maxAnsSize * sizeof(int));
-
-    cudaMalloc(&d_newLabels, n * sizeof(int));
-    cudaMalloc(&d_keepFlags, n * sizeof(int));
-    cudaMalloc(&d_scatterIdx, n * sizeof(int));
-
-    cudaMalloc(&d_labelCounts, maxAnsSize * sizeof(int));
-    cudaMalloc(&d_labelOffsets, (maxAnsSize + 1) * sizeof(int));
-    cudaMalloc(&d_labelCounters, maxAnsSize * sizeof(int));
-
-    cudaMalloc(&d_newAnsX, maxAnsSize * sizeof(float));
-    cudaMalloc(&d_newAnsY, maxAnsSize * sizeof(float));
-    
     free(h_ansX);
     free(h_ansY);
 
@@ -498,17 +452,26 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_ansX, d_ansY, ansSize,
             d_distances, currentN);
 
+        int *d_segmentOffsets;
+        DistIdxPair *d_maxPerSegment;
+        cudaMalloc(&d_segmentOffsets, (numLabels + 1) * sizeof(int));
         cudaMemset(d_segmentOffsets, -1, (numLabels + 1) * sizeof(int));
+        cudaMalloc(&d_maxPerSegment, numLabels * sizeof(DistIdxPair));
         
         segmentedMaxDistReduce(d_distances, d_labels, d_segmentOffsets, 
                                d_maxPerSegment, currentN, numLabels);
         cudaDeviceSynchronize();
 
+        cudaMalloc(&d_state, numLabels * sizeof(int));
+        cudaMalloc(&d_goesLeft, currentN * sizeof(int));
+        cudaMalloc(&d_goesRight, currentN * sizeof(int));
         cudaMemset(d_state, 0, numLabels * sizeof(int));
         cudaMemset(d_goesLeft, 0, currentN * sizeof(int));
         cudaMemset(d_goesRight, 0, currentN * sizeof(int));
         determineSide<<<numBlocks, BLOCK_SIZE>>>(d_px, d_py, d_labels, d_ansX, d_ansY, d_state, d_maxPerSegment, d_goesLeft, d_goesRight, currentN);
 
+        int *d_statePrefixSum;
+        cudaMalloc(&d_statePrefixSum, numLabels * sizeof(int));
         cubExclusiveScanInt(d_state, d_statePrefixSum, numLabels);
 
         int lastState, lastStatePrefixSum;
@@ -518,10 +481,21 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
 
         int newNumLabels = numLabels + numNewHullPoints;
 
+
         if (numNewHullPoints == 0) {
+            cudaFree(d_segmentOffsets);
+            cudaFree(d_maxPerSegment);
+            cudaFree(d_state);
+            cudaFree(d_goesLeft);
+            cudaFree(d_goesRight);
+            cudaFree(d_statePrefixSum);
             break;
         }
         
+        int *d_newLabels, *d_keepFlags, *d_scatterIdx;
+        cudaMalloc(&d_newLabels, currentN * sizeof(int));
+        cudaMalloc(&d_keepFlags, currentN * sizeof(int));
+        cudaMalloc(&d_scatterIdx, currentN * sizeof(int));
         cudaMemset(d_keepFlags, 0, currentN * sizeof(int));
         
         computeNewLabelsKernel<<<numBlocks, BLOCK_SIZE>>>(
@@ -529,6 +503,10 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             d_goesLeft, d_goesRight,
             d_newLabels, d_keepFlags, currentN);
         
+        int *d_labelCounts, *d_labelOffsets, *d_labelCounters;
+        cudaMalloc(&d_labelCounts, newNumLabels * sizeof(int));
+        cudaMalloc(&d_labelOffsets, (newNumLabels + 1) * sizeof(int));
+        cudaMalloc(&d_labelCounters, newNumLabels * sizeof(int));
         cudaMemset(d_labelCounts, 0, newNumLabels * sizeof(int));
         cudaMemset(d_labelCounters, 0, newNumLabels * sizeof(int));
         
@@ -539,7 +517,12 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
 
         int newN;
         cudaMemcpy(&newN, d_labelOffsets + newNumLabels, sizeof(int), cudaMemcpyDeviceToHost);
+        
         int newAnsSize = numLabels + 1 + newNumLabels - numLabels;
+        
+        float *d_newAnsX, *d_newAnsY;
+        cudaMalloc(&d_newAnsX, newAnsSize * sizeof(float));
+        cudaMalloc(&d_newAnsY, newAnsSize * sizeof(float));
         
         int ansBlocks = (numLabels + 1 + BLOCK_SIZE) / BLOCK_SIZE;
         buildNewAnsKernel<<<ansBlocks, BLOCK_SIZE>>>(
@@ -548,18 +531,31 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         
         cudaMemcpy(d_ansX, d_newAnsX, newAnsSize * sizeof(float), cudaMemcpyDeviceToDevice);
         cudaMemcpy(d_ansY, d_newAnsY, newAnsSize * sizeof(float), cudaMemcpyDeviceToDevice);
+        cudaFree(d_newAnsX);
+        cudaFree(d_newAnsY);
         
         ansSize = newAnsSize;
 
         // If no points remaining
         if (newN == 0) {
+            cudaFree(d_segmentOffsets);
+            cudaFree(d_maxPerSegment);
+            cudaFree(d_state);
+            cudaFree(d_goesLeft);
+            cudaFree(d_goesRight);
+            cudaFree(d_statePrefixSum);
+            cudaFree(d_newLabels);
+            cudaFree(d_keepFlags);
+            cudaFree(d_scatterIdx);
+            cudaFree(d_labelCounts);
+            cudaFree(d_labelOffsets);
+            cudaFree(d_labelCounters);
             break;
         }
         
         computeLocalScatterIdx<<<numBlocks, BLOCK_SIZE>>>(
             d_newLabels, d_keepFlags, d_labelOffsets, d_scatterIdx, d_labelCounters, currentN);
         
-
         float *d_px_new, *d_py_new;
         int *d_labels_new;
         cudaMalloc(&d_px_new, newN * sizeof(float));
@@ -580,6 +576,22 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         
         currentN = newN;
         numLabels = newNumLabels;
+        
+        cudaFree(d_distances);
+        cudaMalloc(&d_distances, currentN * sizeof(float));
+        
+        cudaFree(d_segmentOffsets);
+        cudaFree(d_maxPerSegment);
+        cudaFree(d_state);
+        cudaFree(d_goesLeft);
+        cudaFree(d_goesRight);
+        cudaFree(d_statePrefixSum);
+        cudaFree(d_newLabels);
+        cudaFree(d_keepFlags);
+        cudaFree(d_scatterIdx);
+        cudaFree(d_labelCounts);
+        cudaFree(d_labelOffsets);
+        cudaFree(d_labelCounters);
     }
 
     h_ansX = (float*)malloc(ansSize * sizeof(float));
@@ -594,23 +606,6 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     free(h_ansX);
     free(h_ansY);
 
-    cudaFree(d_state);
-    cudaFree(d_goesLeft);
-    cudaFree(d_goesRight);
-    cudaFree(d_segmentOffsets);
-    cudaFree(d_maxPerSegment);
-    cudaFree(d_statePrefixSum);
-    cudaFree(d_newLabels);
-    cudaFree(d_keepFlags);
-    cudaFree(d_scatterIdx);
-    cudaFree(d_labelCounts);
-    cudaFree(d_labelOffsets);
-    cudaFree(d_labelCounters);
-    cudaFree(d_newAnsX);
-    cudaFree(d_newAnsY);
-    cudaFree(d_px);
-    cudaFree(d_py);
-    cudaFree(d_labels);
     cudaFree(d_px);
     cudaFree(d_py);
     cudaFree(d_distances);
