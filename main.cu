@@ -3,10 +3,14 @@
 #include <cmath>
 #include <ctime>
 #include <chrono>
+#include <vector>
+#include <cstring>
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
 
 #define PI 3.14159265358979323846f
+
+// ================= Algorithms =================
 
 // CPU
 extern void cpuMonotoneChain(
@@ -30,11 +34,7 @@ extern "C" void gpuQuickHullnaive(
     float *result_x, float *result_y, int *M
 );
 
-// Visualizer
-extern "C" void visualizeConvexHull(float* input_x, float* input_y, int num_points,
-                                     float* hull_x, float* hull_y, int hull_size,
-                                     const char* output_filename);
-
+// ================= Point generation =================
 
 __global__ void generate_points(float *px, float *py, int N, unsigned long long seed) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -43,104 +43,149 @@ __global__ void generate_points(float *px, float *py, int N, unsigned long long 
     curandStatePhilox4_32_10_t state;
     curand_init(seed, idx, 0, &state);
 
-    // Generate uniform random numbers
-    float u = curand_uniform(&state);        // [0,1)
+    float u = curand_uniform(&state);
     float theta = curand_uniform(&state) * 2.0f * PI;
 
-    // Map to circle
     float r = sqrtf(u);
     px[idx] = r * cosf(theta);
     py[idx] = r * sinf(theta);
 }
 
+// ================= Timing helper =================
+
+double elapsed_ms(
+    std::chrono::high_resolution_clock::time_point a,
+    std::chrono::high_resolution_clock::time_point b)
+{
+    return std::chrono::duration<double, std::milli>(b - a).count();
+}
+
+// ================= Main =================
+
 int main()
 {
-    int N = 100000000;
+    const std::vector<int> input_sizes = {
+        1000000,
+        5000000,
+        10000000,
+        50000000,
+        100000000,
+        500000000
+    };
 
-    float *d_px, *d_py;
-    cudaMalloc(&d_px, N * sizeof(float));
-    cudaMalloc(&d_py, N * sizeof(float));
+    const int NUM_SETS  = 10;
+    const int NUM_RUNS  = 3;
 
-    int threads = 256;
-    int blocks = (N + threads - 1) / threads;
-    generate_points<<<blocks, threads>>>(d_px, d_py, N, 123456ULL);
-    cudaDeviceSynchronize();
-    float *h_px = (float*)malloc(N*sizeof(float));
-    float *h_py = (float*)malloc(N*sizeof(float));
-    cudaMemcpy(h_px, d_px, N*sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_py, d_py, N*sizeof(float), cudaMemcpyDeviceToHost);
+    for (int N : input_sizes) {
 
-    float *result_x = (float*) malloc(sizeof(float) * N);
-    float *result_y = (float*) malloc(sizeof(float) * N);
-    int M_cpu = 0, M_gpu = 0;
+        printf("\n=====================================================\n");
+        printf("N = %d\n", N);
+        printf("=====================================================\n");
 
-    /* ================= CPU ================= */
-    // auto cpu_start = std::chrono::high_resolution_clock::now();
-    // cpuMonotoneChain(px, py, N, result_x, result_y, &M_cpu);
-    // auto cpu_end = std::chrono::high_resolution_clock::now();
-    // double cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
+        // Allocate GPU memory for points
+        float *d_px, *d_py;
+        cudaMalloc(&d_px, N * sizeof(float));
+        cudaMalloc(&d_py, N * sizeof(float));
 
-    // printf("CPU Monotone chain:\n");
-    // printf("[");
-    // for (int i = 0; i < M_cpu; i++) {
-    //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
-    //     if (i < M_cpu - 1) printf(", ");
-    // }
-    // printf("]\n");
-    // printf("Hull size: %d\n", M_cpu);
-    // printf("Time: %.3f ms\n\n", cpu_ms);
+        // Allocate host memory
+        float *h_px = (float*)malloc(N * sizeof(float));
+        float *h_py = (float*)malloc(N * sizeof(float));
+        float *result_x = (float*)malloc(N * sizeof(float));
+        float *result_y = (float*)malloc(N * sizeof(float));
 
+        int threads = 256;
+        int blocks = (N + threads - 1) / threads;
 
-    /* ================= GPU ================= */
-    // Timed run
-    memset(result_x, 0, sizeof(float) * N);
-    memset(result_y, 0, sizeof(float) * N);
-    auto gpu_start = std::chrono::high_resolution_clock::now();
-    gpuQuickHull(h_px, h_py, N, result_x, result_y, &M_gpu);
-    cudaDeviceSynchronize();
-    auto gpu_end = std::chrono::high_resolution_clock::now();
-    double gpu_ms = std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
+        for (int set = 0; set < NUM_SETS; ++set) {
 
-    printf("GPU QuickHull:\n");
-    // printf("[");
-    // for (int i = 0; i < M_gpu; i++) {
-    //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
-    //     if (i < M_gpu - 1) printf(", ");
-    // }
-    // printf("]\n");
-    printf("Hull size: %d\n", M_gpu);
-    printf("Time: %.3f ms\n\n", gpu_ms);
+            printf("\n--- Input set %d / %d ---\n", set + 1, NUM_SETS);
 
-   
-    /* ================= GPU naive ================= */
-    // Timed run
-    memset(result_x, 0, sizeof(float) * N);
-    memset(result_y, 0, sizeof(float) * N);
-    gpu_start = std::chrono::high_resolution_clock::now();
-    gpuQuickHullnaive(h_px, h_py, N, result_x, result_y, &M_gpu);
-    cudaDeviceSynchronize();
-    gpu_end = std::chrono::high_resolution_clock::now();
-    gpu_ms = std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
-    printf("GPU naive QuickHull:\n");
-    // printf("[");
-    // for (int i = 0; i < M_gpu; i++) {
-    //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
-    //     if (i < M_gpu - 1) printf(", ");
-    // }
-    // printf("]\n");
-    printf("Hull size: %d\n", M_gpu);
-    printf("Time: %.3f ms\n\n", gpu_ms);
+            // Generate new input set
+            unsigned long long seed = 123456ULL + set;
+            generate_points<<<blocks, threads>>>(d_px, d_py, N, seed);
+            cudaDeviceSynchronize();
 
-    // Visualize the result
-    // printf("Creating visualization...\n");
-    // visualizeConvexHull(px, py, N, result_x, result_y, M_gpu, "convex_hull_visualization");
+            cudaMemcpy(h_px, d_px, N * sizeof(float), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_py, d_py, N * sizeof(float), cudaMemcpyDeviceToHost);
 
-    free(h_px);
-    free(h_py);
-    free(result_x);
-    free(result_y);
-    cudaFree(d_px);
-    cudaFree(d_py);
+            /* ================= CPU Monotone Chain ================= */
+
+            std::vector<double> cpu_times;
+            int M_cpu = 0;
+
+            for (int run = 0; run < NUM_RUNS; ++run) {
+                memset(result_x, 0, N * sizeof(float));
+                memset(result_y, 0, N * sizeof(float));
+
+                auto t0 = std::chrono::high_resolution_clock::now();
+                cpuMonotoneChain(h_px, h_py, N, result_x, result_y, &M_cpu);
+                auto t1 = std::chrono::high_resolution_clock::now();
+
+                cpu_times.push_back(elapsed_ms(t0, t1));
+            }
+
+            printf("CPU Monotone Chain:\n");
+            printf("  Hull size: %d\n", M_cpu);
+            printf("  First run: %.3f ms\n", cpu_times[0]);
+            printf("  All runs : ");
+            for (double t : cpu_times) printf("%.3f ms  ", t);
+            printf("\n");
+
+            /* ================= GPU QuickHull ================= */
+
+            std::vector<double> gpu_times;
+            int M_gpu = 0;
+
+            for (int run = 0; run < NUM_RUNS; ++run) {
+                memset(result_x, 0, N * sizeof(float));
+                memset(result_y, 0, N * sizeof(float));
+
+                auto t0 = std::chrono::high_resolution_clock::now();
+                gpuQuickHull(h_px, h_py, N, result_x, result_y, &M_gpu);
+                cudaDeviceSynchronize();
+                auto t1 = std::chrono::high_resolution_clock::now();
+
+                gpu_times.push_back(elapsed_ms(t0, t1));
+            }
+
+            printf("GPU QuickHull:\n");
+            printf("  Hull size: %d\n", M_gpu);
+            printf("  First run: %.3f ms\n", gpu_times[0]);
+            printf("  All runs : ");
+            for (double t : gpu_times) printf("%.3f ms  ", t);
+            printf("\n");
+
+            /* ================= GPU Naive QuickHull ================= */
+
+            std::vector<double> gpu_naive_times;
+
+            for (int run = 0; run < NUM_RUNS; ++run) {
+                memset(result_x, 0, N * sizeof(float));
+                memset(result_y, 0, N * sizeof(float));
+
+                auto t0 = std::chrono::high_resolution_clock::now();
+                gpuQuickHullnaive(h_px, h_py, N, result_x, result_y, &M_gpu);
+                cudaDeviceSynchronize();
+                auto t1 = std::chrono::high_resolution_clock::now();
+
+                gpu_naive_times.push_back(elapsed_ms(t0, t1));
+            }
+
+            printf("GPU Naive QuickHull:\n");
+            printf("  Hull size: %d\n", M_gpu);
+            printf("  First run: %.3f ms\n", gpu_naive_times[0]);
+            printf("  All runs : ");
+            for (double t : gpu_naive_times) printf("%.3f ms  ", t);
+            printf("\n");
+        }
+
+        free(h_px);
+        free(h_py);
+        free(result_x);
+        free(result_y);
+        cudaFree(d_px);
+        cudaFree(d_py);
+    }
 
     return 0;
 }

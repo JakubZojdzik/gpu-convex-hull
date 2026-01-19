@@ -9,7 +9,7 @@
 #include <cub/device/device_segmented_reduce.cuh>
 #include "utils.h"
 
-#define BLOCK_SIZE 512
+#define BLOCK_SIZE 258
 
 #define DEBUG_PRINT
 #ifdef DEBUG_PRINT

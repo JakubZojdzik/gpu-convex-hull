@@ -8,7 +8,7 @@
 #include <cub/device/device_reduce.cuh>
 #include "utils.h"
 
-#define BLOCK_SIZE 512
+#define BLOCK_SIZE 128
 
 
 struct MinMaxPoint {
