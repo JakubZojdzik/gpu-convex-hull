@@ -171,7 +171,6 @@ void segmentedMaxDistReduce(
     findSegmentOffsetsKernel<<<numBlocks, BLOCK_SIZE>>>(
         d_labels, d_segmentOffsets, numSegments, n);
     cudaDeviceSynchronize();
-    int h_offsets[numSegments + 1];
 
     int numBlocksSegments = (numSegments + BLOCK_SIZE - 1) / BLOCK_SIZE;
     fillOffsets<<<numBlocksSegments, BLOCK_SIZE>>>(d_segmentOffsets, numSegments);
@@ -441,6 +440,10 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     cudaMemcpy(d_ansX, h_ansX, ansSize * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_ansY, h_ansY, ansSize * sizeof(float), cudaMemcpyHostToDevice);
 
+    cudaMalloc(&d_state, maxAnsSize * sizeof(int));
+    cudaMalloc(&d_goesLeft, n * sizeof(int));
+    cudaMalloc(&d_goesRight, n * sizeof(int));
+
     free(h_ansX);
     free(h_ansY);
 
@@ -463,9 +466,7 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
                                d_maxPerSegment, currentN, numLabels);
         cudaDeviceSynchronize();
 
-        cudaMalloc(&d_state, numLabels * sizeof(int));
-        cudaMalloc(&d_goesLeft, currentN * sizeof(int));
-        cudaMalloc(&d_goesRight, currentN * sizeof(int));
+        
         cudaMemset(d_state, 0, numLabels * sizeof(int));
         cudaMemset(d_goesLeft, 0, currentN * sizeof(int));
         cudaMemset(d_goesRight, 0, currentN * sizeof(int));
@@ -486,9 +487,6 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         if (numNewHullPoints == 0) {
             cudaFree(d_segmentOffsets);
             cudaFree(d_maxPerSegment);
-            cudaFree(d_state);
-            cudaFree(d_goesLeft);
-            cudaFree(d_goesRight);
             cudaFree(d_statePrefixSum);
             break;
         }
@@ -541,9 +539,6 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         if (newN == 0) {
             cudaFree(d_segmentOffsets);
             cudaFree(d_maxPerSegment);
-            cudaFree(d_state);
-            cudaFree(d_goesLeft);
-            cudaFree(d_goesRight);
             cudaFree(d_statePrefixSum);
             cudaFree(d_newLabels);
             cudaFree(d_keepFlags);
@@ -583,9 +578,6 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         
         cudaFree(d_segmentOffsets);
         cudaFree(d_maxPerSegment);
-        cudaFree(d_state);
-        cudaFree(d_goesLeft);
-        cudaFree(d_goesRight);
         cudaFree(d_statePrefixSum);
         cudaFree(d_newLabels);
         cudaFree(d_keepFlags);
@@ -594,6 +586,10 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         cudaFree(d_labelOffsets);
         cudaFree(d_labelCounters);
     }
+
+    cudaFree(d_state);
+    cudaFree(d_goesLeft);
+    cudaFree(d_goesRight);
 
     h_ansX = (float*)malloc(ansSize * sizeof(float));
     h_ansY = (float*)malloc(ansSize * sizeof(float));
