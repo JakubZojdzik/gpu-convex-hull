@@ -40,7 +40,7 @@ extern "C" void visualizeConvexHull(float* input_x, float* input_y, int num_poin
 
 int main()
 {
-    int N = 1000000;
+    int N = 100000000;
 
     float *px = (float*) malloc(sizeof(float) * N);
     float *py = (float*) malloc(sizeof(float) * N);
