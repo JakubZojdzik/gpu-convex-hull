@@ -32,7 +32,7 @@ for BLOCK in "${BLOCK_SIZES[@]}"; do
             "s/generate_points<<<blocks, threads>>>(d_px, d_py, N, .*ULL);/generate_points<<<blocks, threads>>>(d_px, d_py, N, ${SEED});/" \
             "$MAIN_FILE"
 
-        make $> /dev/null
+        make &> /dev/null
 
         echo "[./main]"
         ./main
