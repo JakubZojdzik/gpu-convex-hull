@@ -135,6 +135,16 @@ __global__ void buildDistIdxArray(const float *distances, DistIdxPair *pairs, in
     }
 }
 
+__global__ void fillOffsets(int *offsets, int numSegments) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if(i < numSegments && i > 0 && offsets[i] == -1 && offsets[i+1] != -1) {
+        for(int j = i; offsets[j] == -1 && j > 0; j--) {
+            offsets[j] = offsets[i+1];
+        }
+    }
+}
+
 __global__ void findSegmentOffsetsKernel(const int *labels, int *offsets, int numSegments, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     
@@ -145,14 +155,6 @@ __global__ void findSegmentOffsetsKernel(const int *labels, int *offsets, int nu
     
     if (i < n - 1 && labels[i] != labels[i + 1])
         offsets[labels[i + 1]] = i + 1;
-
-    cudaDeviceSynchronize();
-
-    if(i < numSegments && i > 0 && offsets[i] == -1 && offsets[i+1] != -1) {
-        for(int j = i; offsets[j] == -1 && j > 0; j--) {
-            offsets[j] = offsets[i+1];
-        }
-    }
 }
 
 
@@ -169,6 +171,7 @@ void segmentedMaxDistReduce(
     findSegmentOffsetsKernel<<<numBlocks, BLOCK_SIZE>>>(
         d_labels, d_segmentOffsets, numSegments, n);
     cudaDeviceSynchronize();
+    fillOffsets(d_segmentOffsets, numsegments);
 
     // int h_offsets[numSegments + 1];
     // cudaMemcpy(h_offsets, d_segmentOffsets, (numSegments + 1) * sizeof(int), cudaMemcpyDeviceToHost);
@@ -187,6 +190,7 @@ void segmentedMaxDistReduce(
     size_t temp_bytes = 0;
     
     DistIdxPair identity{0.0f, -1};
+    cudaDeviceSynchronize();
     
     cub::DeviceSegmentedReduce::Reduce(
         d_temp, temp_bytes,
