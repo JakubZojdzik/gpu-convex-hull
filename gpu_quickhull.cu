@@ -234,12 +234,13 @@ __global__ void computeDistancesKernel(float *px, float *py, int *labels,
     // Load required ANS entries into shared memory
     // indexes [minLabel, maxLabel+1] from ANS
     int ansRange = maxLabel - minLabel + 2;
-    if (tid < ansRange && tid < sharedAnsHalfSize) {
-        if ((minLabel + tid) >= ansSize) {
-            return;
+    
+    // Load in a loop if ansRange > blockDim.x
+    for (int i = tid; i < ansRange; i += blockDim.x) {
+        if ((minLabel + i) < ansSize) {
+            sAnsX[i] = ansX[minLabel + i];
+            sAnsY[i] = ansY[minLabel + i];
         }
-        sAnsX[tid] = ansX[minLabel + tid];
-        sAnsY[tid] = ansY[minLabel + tid];
     }
     __syncthreads();
 
