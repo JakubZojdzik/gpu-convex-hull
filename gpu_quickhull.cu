@@ -173,29 +173,9 @@ void segmentedMaxDistReduce(
     cudaDeviceSynchronize();
     int h_offsets[numSegments + 1];
 
-    cudaMemcpy(h_offsets, d_segmentOffsets, (numSegments + 1) * sizeof(int), cudaMemcpyDeviceToHost);
-    fprintf(stderr, "1. offfsets:\n");
-    for(int i = 0; i < numSegments; i++)
-        fprintf(stderr, "%d, ", h_offsets[i]);
-    fprintf(stderr, "\n\n");
-
-
     int numBlocksSegments = (numSegments + BLOCK_SIZE - 1) / BLOCK_SIZE;
     fillOffsets<<<numBlocksSegments, BLOCK_SIZE>>>(d_segmentOffsets, numSegments);
 
-    cudaMemcpy(h_offsets, d_segmentOffsets, (numSegments + 1) * sizeof(int), cudaMemcpyDeviceToHost);
-    fprintf(stderr, "2. offfsets:\n");
-    for(int i = 0; i < numSegments; i++)
-        fprintf(stderr, "%d, ", h_offsets[i]);
-    fprintf(stderr, "\n\n");
-
-    // for (int i = numSegments-1; i >= 1; i--) {
-    //     if (h_offsets[i] == -1) {
-    //         h_offsets[i] = h_offsets[i + 1];
-    //     }
-    // }
-    // cudaMemcpy(d_segmentOffsets, h_offsets, (numSegments + 1) * sizeof(int), cudaMemcpyHostToDevice);
-    
     DistIdxPair *d_pairs;
     cudaMalloc(&d_pairs, n * sizeof(DistIdxPair));
     buildDistIdxArray<<<numBlocks, BLOCK_SIZE>>>(d_distances, d_pairs, n);
