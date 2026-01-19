@@ -106,11 +106,12 @@ int main()
     memset(result_x, 0, sizeof(float) * N);
     memset(result_y, 0, sizeof(float) * N);
     auto gpu_start = std::chrono::high_resolution_clock::now();
-    gpuQuickHullnaive(px, py, N, result_x, result_y, &M_gpu);
+    gpuQuickHull(px, py, N, result_x, result_y, &M_gpu);
     cudaDeviceSynchronize();
     auto gpu_end = std::chrono::high_resolution_clock::now();
     double gpu_ms = std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
-    printf("GPU naive QuickHull:\n");
+
+    printf("GPU QuickHull:\n");
     // printf("[");
     // for (int i = 0; i < M_gpu; i++) {
     //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
@@ -120,16 +121,17 @@ int main()
     printf("Hull size: %d\n", M_gpu);
     printf("Time: %.3f ms\n\n", gpu_ms);
 
+   
+    /* ================= GPU naive ================= */
     // Timed run
     memset(result_x, 0, sizeof(float) * N);
     memset(result_y, 0, sizeof(float) * N);
     gpu_start = std::chrono::high_resolution_clock::now();
-    gpuQuickHull(px, py, N, result_x, result_y, &M_gpu);
+    gpuQuickHullnaive(px, py, N, result_x, result_y, &M_gpu);
     cudaDeviceSynchronize();
     gpu_end = std::chrono::high_resolution_clock::now();
     gpu_ms = std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
-
-    printf("GPU QuickHull:\n");
+    printf("GPU naive QuickHull:\n");
     // printf("[");
     // for (int i = 0; i < M_gpu; i++) {
     //     printf("(%.3f, %.3f)", result_x[i], result_y[i]);
