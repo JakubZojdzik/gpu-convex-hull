@@ -466,10 +466,6 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     cudaMalloc(&d_newAnsX, maxAnsSize * sizeof(float));
     cudaMalloc(&d_newAnsY, maxAnsSize * sizeof(float));
     
-    cudaMalloc(&d_px_new, n * sizeof(float));
-    cudaMalloc(&d_py_new, n * sizeof(float));
-    cudaMalloc(&d_labels_new, n * sizeof(int));
-
     free(h_ansX);
     free(h_ansY);
 
@@ -543,11 +539,21 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
         computeLocalScatterIdx<<<numBlocks, BLOCK_SIZE>>>(
             d_newLabels, d_keepFlags, d_labelOffsets, d_scatterIdx, d_labelCounters, currentN);
         
+
+        float *d_px_new, *d_py_new;
+        int *d_labels_new;
+        cudaMalloc(&d_px_new, newN * sizeof(float));
+        cudaMalloc(&d_py_new, newN * sizeof(float));
+        cudaMalloc(&d_labels_new, newN * sizeof(int));
+        
         compactPointsKernel<<<numBlocks, BLOCK_SIZE>>>(
             d_px, d_py, d_newLabels,
             d_px_new, d_py_new, d_labels_new,
             d_keepFlags, d_scatterIdx, currentN);
         
+        cudaFree(d_px);
+        cudaFree(d_py);
+        cudaFree(d_labels);
         d_px = d_px_new;
         d_py = d_py_new;
         d_labels = d_labels_new;
@@ -585,9 +591,6 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     cudaFree(d_px);
     cudaFree(d_py);
     cudaFree(d_labels);
-    cudaFree(d_px_new);
-    cudaFree(d_py_new);
-    cudaFree(d_labels_new);
     cudaFree(d_px);
     cudaFree(d_py);
     cudaFree(d_distances);
