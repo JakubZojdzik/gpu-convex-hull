@@ -29,7 +29,7 @@ extern "C" void gpuQuickHullNaive(
 ///////
 
 
-extern "C" void visualizeConvexHullDefault(
+extern "C" void visualizeConvexHull(
     float *points_x, float *points_y, int N,
     float *hull_x, float *hull_y, int M,
     const char *filename
