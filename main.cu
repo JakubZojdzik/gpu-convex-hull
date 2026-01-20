@@ -112,8 +112,8 @@ int main()
     printf("\n");
 
     // Visualize GPU result
-    visualizeConvexHullDefault(h_px, h_py, N, result_x, result_y, M_gpu, 
-                              "convex_hull_gpu.ppm");
+    visualizeConvexHull(h_px, h_py, N, result_x, result_y, M_gpu, 
+                              "results.ppm", 1920, 1080);
 
 
     free(h_px);

@@ -2,11 +2,7 @@
 #include <cstdlib>
 #include <cuda_runtime.h>
 
-// Simple CUDA-based visualization that renders to a PPM image
-// PPM is a simple uncompressed image format that doesn't require external libraries
 
-#define IMAGE_WIDTH 1920
-#define IMAGE_HEIGHT 1080
 #define MARGIN_PERCENT 0.05f  // 5% margin on each side
 
 // Simple kernel to draw a point on the image
