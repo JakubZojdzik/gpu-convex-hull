@@ -46,7 +46,7 @@ static __global__ void buildPointArray(const float *px,
                                 IndexedPoint *out,
                                 int n)
 {
-    int i = blockidx.x * blockdim.x + threadidx.x;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
         out[i].x   = px[i];
         out[i].y   = py[i];
