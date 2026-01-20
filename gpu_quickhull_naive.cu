@@ -388,7 +388,7 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
     }
 }
 
-extern "C" void gpuQuickHullnaive(float *h_px, float *h_py, int n,
+extern "C" void gpuQuickHullNaive(float *h_px, float *h_py, int n,
                               float *result_x, float *result_y, int *M) {
     if (n <= 2) {
         for (int i = 0; i < n; i++) {
