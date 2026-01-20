@@ -11,14 +11,12 @@
 
 #define PI 3.14159265358979323846f
 
-
-// CPU
+///////
 extern void cpuMonotoneChain(
     float *p_x, float *p_y, int N,
     float *result_x, float *result_y, int *M
 );
 
-// GPU
 extern "C" void gpuQuickHull(
     float *p_x, float *p_y, int N,
     float *result_x, float *result_y, int *M
@@ -27,6 +25,14 @@ extern "C" void gpuQuickHull(
 extern "C" void gpuQuickHullNaive(
     float *p_x, float *p_y, int N,
     float *result_x, float *result_y, int *M
+);
+///////
+
+
+extern "C" void visualizeConvexHullDefault(
+    float *points_x, float *points_y, int N,
+    float *hull_x, float *hull_y, int M,
+    const char *filename
 );
 
 __global__ void generate_points(float *px, float *py, int N, unsigned long long seed) {
@@ -57,7 +63,7 @@ double elapsed_ms(
 
 int main()
 {
-    int N = 10000000;
+    int N = 50000;  // Smaller dataset for visualization
     float *d_px, *d_py;
     cudaMalloc(&d_px, N * sizeof(float));
     cudaMalloc(&d_py, N * sizeof(float));
@@ -85,6 +91,7 @@ int main()
     cpuMonotoneChain(h_px, h_py, N, result_x, result_y, &M_cpu);
     auto t1 = std::chrono::high_resolution_clock::now();
 
+    printf("CPU Monotone Chain:\n");
     printf("Hull size: %d\n", M_cpu);
     printf("time: %.3f ms\n", elapsed_ms(t0, t1));
     printf("\n");
@@ -99,9 +106,14 @@ int main()
     cudaDeviceSynchronize();
     t1 = std::chrono::high_resolution_clock::now();
 
+    printf("GPU QuickHull Naive:\n");
     printf("Hull size: %d\n", M_gpu);
     printf("time: %.3f ms\n", elapsed_ms(t0, t1));
     printf("\n");
+
+    // Visualize GPU result
+    visualizeConvexHullDefault(h_px, h_py, N, result_x, result_y, M_gpu, 
+                              "convex_hull_gpu.ppm");
 
 
     free(h_px);

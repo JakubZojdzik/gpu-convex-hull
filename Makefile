@@ -14,7 +14,7 @@ CPU_SRCS := \
 GPU_SRCS := \
 	gpu_quickhull_naive.cu \
 	gpu_quickhull.cu \
-	visualizer.cu
+	visualize.cu
 
 CPU_OBJS  := $(CPU_SRCS:.cpp=.o)
 GPU_OBJS  := $(GPU_SRCS:.cu=.o)
