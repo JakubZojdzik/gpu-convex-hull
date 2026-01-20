@@ -45,6 +45,15 @@ __global__ void generate_points(float *px, float *py, int N, unsigned long long 
 }
 
 
+double elapsed_ms(
+    std::chrono::high_resolution_clock::time_point a,
+    std::chrono::high_resolution_clock::time_point b)
+{
+    return std::chrono::duration<double, std::milli>(b - a).count();
+}
+
+
+
 int main()
 {
     int N = 10000000;
@@ -59,7 +68,7 @@ int main()
 
     int threads = 256;
     int blocks = (N + threads - 1) / threads;
-    unsigned long long seed = 123456ULL + set;
+    unsigned long long seed = 123456ULL;
     generate_points<<<blocks, threads>>>(d_px, d_py, N, seed);
     cudaDeviceSynchronize();
 
