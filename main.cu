@@ -83,6 +83,7 @@ int main()
     memset(result_y, 0, N * sizeof(float));
     auto t0 = std::chrono::high_resolution_clock::now();
     cpuMonotoneChain(h_px, h_py, N, result_x, result_y, &M_cpu);
+    auto t1 = std::chrono::high_resolution_clock::now();
 
     printf("Hull size: %d\n", M_cpu);
     printf("time: %.3f ms\n", elapsed_ms(t0, t1));
