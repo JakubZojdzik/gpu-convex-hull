@@ -41,9 +41,9 @@ struct MaxXOp {
 };
 
 
-static __global__ void buildpointarray(const float *px,
+static __global__ void buildPointArray(const float *px,
                                 const float *py,
-                                indexedpoint *out,
+                                IndexedPoint *out,
                                 int n)
 {
     int i = blockidx.x * blockdim.x + threadidx.x;
