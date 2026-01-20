@@ -260,15 +260,18 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
                 d_distances + part.start, part.count);
             cudaDeviceSynchronize();
 
-            cub::KeyValuePair<int, float>* d_out = nullptr;
-            cudaMalloc(&d_out, sizeof(cub::KeyValuePair<int, float>));
+            float* d_maxValue = nullptr;
+            int* d_maxIdx = nullptr;
+            cudaMalloc(&d_maxValue, sizeof(float));
+            cudaMalloc(&d_maxIdx, sizeof(int));
+
             void*  d_temp = nullptr;
             size_t temp_bytes = 0;
 
             cub::DeviceReduce::ArgMax(
                 d_temp, temp_bytes,
                 d_distances + part.start,
-                d_out,
+                d_maxValue, d_maxIdx,
                 part.count
             );
 
@@ -276,16 +279,19 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             cub::DeviceReduce::ArgMax(
                 d_temp, temp_bytes,
                 d_distances + part.start,
-                d_out,
+                d_maxValue, d_maxIdx,
                 part.count
             );
             cub::KeyValuePair<int, float> h_out;
-            cudaMemcpy(&h_out, d_out, sizeof(h_out), cudaMemcpyDeviceToHost);
 
-            int h_maxIdx  = h_out.key;
-            float h_maxDist = h_out.value;
+            int h_maxIdx;
+            float h_maxDist;
 
-            cudaFree(d_out);
+            cudaMemcpy(&h_maxIdx, d_maxIdx, sizeof(int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&h_maxDist, d_maxDist, sizeof(float), cudaMemcpyDeviceToHost);
+
+            cudaFree(d_maxIdx);
+            cudaFree(d_maxValue);
             cudaFree(d_temp);
 
             if (h_maxIdx < 0 || h_maxDist <= 0.0f) {
