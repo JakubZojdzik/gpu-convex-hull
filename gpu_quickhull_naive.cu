@@ -154,13 +154,8 @@ __global__ void classifyPointsKernel(float *px, float *py, float *oldDistances,
     float distLM = (mx - lx) * (curY - ly) - (my - ly) * (curX - lx);
     float distMR = (rx - mx) * (curY - my) - (ry - my) * (curX - mx);
 
-    if(distLM > 0) {
-        goesLeft[idx] = 1;
-        goesRight[idx] = 0;
-    } else if(distMR > 0) {
-        goesLeft[idx] = 0;
-        goesRight[idx] = 1;
-    }
+    goesLeft[idx] = (distLM > 0) ? 1 : 0;
+    goesRight[idx] = (distMR > 0) ? 1 : 0;
     
     newDistLeft[idx] = distLM;
     newDistRight[idx] = distMR;

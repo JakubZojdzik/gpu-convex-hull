@@ -43,7 +43,8 @@ __global__ void generate_points(float *px, float *py, int N, unsigned long long 
     curandStatePhilox4_32_10_t state;
     curand_init(seed, idx, 0, &state);
 
-    float x = curand_uniform(&state), y = curand_uniform(&state);
+    float x = curand_uniform(&state) * 2.0f - 1.0f;
+    float y = curand_uniform(&state) * 2.0f - 1.0f;
     while(x*x + y*y > 1) {
         x = curand_uniform(&state);
         y = curand_uniform(&state);
@@ -64,7 +65,7 @@ double elapsed_ms(
 
 int main()
 {
-    int N = 50000;  // Smaller dataset for visualization
+    int N = 20;  // Smaller dataset for visualization
     float *d_px, *d_py;
     cudaMalloc(&d_px, N * sizeof(float));
     cudaMalloc(&d_py, N * sizeof(float));
