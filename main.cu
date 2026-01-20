@@ -46,8 +46,8 @@ __global__ void generate_points(float *px, float *py, int N, unsigned long long 
     float x = curand_uniform(&state) * 2.0f - 1.0f;
     float y = curand_uniform(&state) * 2.0f - 1.0f;
     while(x*x + y*y > 1) {
-        x = curand_uniform(&state);
-        y = curand_uniform(&state);
+        x = curand_uniform(&state) * 2.0f - 1.0f;
+        y = curand_uniform(&state) * 2.0f - 1.0f;
     }
     px[idx] = x;
     py[idx] = y;
