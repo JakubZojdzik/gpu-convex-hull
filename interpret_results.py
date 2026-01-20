@@ -31,7 +31,7 @@ for s in sections:
     if "N = " in s:
         if N != 0:
             for obj in objs:
-                res_N.append(N)
+                res_N.append(N / 10**6)
                 res_alg.append(obj.alg_name)
                 res_avg_first.append(round(sum(obj.first_run) / len(obj.first_run), 4))
                 res_avg_all.append(round(sum(obj.all_runs) / len(obj.all_runs), 4))
@@ -70,9 +70,9 @@ plt.figure()
 for alg, g in df.groupby("Algorithm"):
     plt.plot(g["N"], g["Avg All Runs (ms)"], marker='o', label=alg)
 
-plt.xlabel("N")
-plt.ylabel("Runtime (ms)")
-plt.title("Runtime Scaling")
+plt.xlabel("N (milions)")
+plt.ylabel("time")
+plt.title("Results")
 plt.legend()
 plt.grid(True, which="both")
 plt.show()

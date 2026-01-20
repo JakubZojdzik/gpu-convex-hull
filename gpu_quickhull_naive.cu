@@ -124,7 +124,7 @@ __global__ void computeDistancesKernel(float *px, float *py,
 }
 
 
-__global__ void classifyPointsForSplitKernel(float *px, float *py, float *oldDistances,
+__global__ void classifyPointsKernel(float *px, float *py, float *oldDistances,
                                               float lx, float ly, float mx, float my, float rx, float ry,
                                               int maxIdx,
                                               int *goesLeft, int *goesRight,
@@ -154,8 +154,13 @@ __global__ void classifyPointsForSplitKernel(float *px, float *py, float *oldDis
     float distLM = (mx - lx) * (curY - ly) - (my - ly) * (curX - lx);
     float distMR = (rx - mx) * (curY - my) - (ry - my) * (curX - mx);
 
-    goesLeft[idx] = (distLM > 0) ? 1 : 0;
-    goesRight[idx] = (distMR > 0) ? 1 : 0;
+    if(distLM > 0) {
+        goesLeft[idx] = 1;
+        goesRight[idx] = 0;
+    } else if(distMR > 0) {
+        goesLeft[idx] = 0;
+        goesRight[idx] = 1;
+    }
     
     newDistLeft[idx] = distLM;
     newDistRight[idx] = distMR;
@@ -282,7 +287,6 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
                 d_maxValue, d_maxIdx,
                 part.count
             );
-            cub::KeyValuePair<int, float> h_out;
 
             int h_maxIdx;
             float h_maxDist;
@@ -307,7 +311,7 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
 
             newAns.push_back({maxPx, maxPy});
 
-            classifyPointsForSplitKernel<<<numBlocks, BLOCK_SIZE>>>(
+            classifyPointsKernel<<<numBlocks, BLOCK_SIZE>>>(
                 d_px + part.start, d_py + part.start, d_distances + part.start,
                 L.x, L.y, maxPx, maxPy, R.x, R.y,
                 h_maxIdx,

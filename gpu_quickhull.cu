@@ -19,7 +19,7 @@
 #endif
 
 
-struct MinMaxPoint {
+struct IndexedPoint {
     float x;
     float y;
     int   idx;
@@ -27,8 +27,8 @@ struct MinMaxPoint {
 
 struct MinXOp {
     __host__ __device__
-    MinMaxPoint operator()(const MinMaxPoint &a,
-                           const MinMaxPoint &b) const
+    IndexedPoint operator()(const IndexedPoint &a,
+                           const IndexedPoint &b) const
     {
         if (a.x < b.x) return a;
         if (a.x > b.x) return b;
@@ -38,8 +38,8 @@ struct MinXOp {
 
 struct MaxXOp {
     __host__ __device__
-    MinMaxPoint operator()(const MinMaxPoint &a,
-                           const MinMaxPoint &b) const
+    IndexedPoint operator()(const IndexedPoint &a,
+                           const IndexedPoint &b) const
     {
         if (a.x > b.x) return a;
         if (a.x < b.x) return b;
@@ -49,7 +49,7 @@ struct MaxXOp {
 
 static __global__ void buildPointArray(const float *px,
                                 const float *py,
-                                MinMaxPoint *out,
+                                IndexedPoint *out,
                                 int n)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -63,18 +63,18 @@ static __global__ void buildPointArray(const float *px,
 static void findMinMaxX_CUB(const float *d_px,
                      const float *d_py,
                      int n,
-                     MinMaxPoint &h_min,
-                     MinMaxPoint &h_max)
+                     IndexedPoint &h_min,
+                     IndexedPoint &h_max)
 {
-    MinMaxPoint *d_points;
-    cudaMalloc(&d_points, n * sizeof(MinMaxPoint));
+    IndexedPoint *d_points;
+    cudaMalloc(&d_points, n * sizeof(IndexedPoint));
 
     int grid  = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     buildPointArray<<<grid, BLOCK_SIZE>>>(d_px, d_py, d_points, n);
 
-    MinMaxPoint *d_min, *d_max;
-    cudaMalloc(&d_min, sizeof(MinMaxPoint));
-    cudaMalloc(&d_max, sizeof(MinMaxPoint));
+    IndexedPoint *d_min, *d_max;
+    cudaMalloc(&d_min, sizeof(IndexedPoint));
+    cudaMalloc(&d_max, sizeof(IndexedPoint));
 
     void *d_temp = nullptr;
     size_t temp_bytes = 0;
@@ -84,7 +84,7 @@ static void findMinMaxX_CUB(const float *d_px,
         d_points, d_min,
         n,
         MinXOp(),
-        MinMaxPoint{FLT_MAX, FLT_MAX, -1}
+        IndexedPoint{FLT_MAX, FLT_MAX, -1}
     );
 
     cudaMalloc(&d_temp, temp_bytes);
@@ -94,7 +94,7 @@ static void findMinMaxX_CUB(const float *d_px,
         d_points, d_min,
         n,
         MinXOp(),
-        MinMaxPoint{FLT_MAX, FLT_MAX, -1}
+        IndexedPoint{FLT_MAX, FLT_MAX, -1}
     );
 
     cub::DeviceReduce::Reduce(
@@ -102,11 +102,11 @@ static void findMinMaxX_CUB(const float *d_px,
         d_points, d_max,
         n,
         MaxXOp(),
-        MinMaxPoint{-FLT_MAX, -FLT_MAX, -1}
+        IndexedPoint{-FLT_MAX, -FLT_MAX, -1}
     );
 
-    cudaMemcpy(&h_min, d_min, sizeof(MinMaxPoint), cudaMemcpyDeviceToHost);
-    cudaMemcpy(&h_max, d_max, sizeof(MinMaxPoint), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&h_min, d_min, sizeof(IndexedPoint), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&h_max, d_max, sizeof(IndexedPoint), cudaMemcpyDeviceToHost);
 
     cudaFree(d_temp);
     cudaFree(d_points);
@@ -212,10 +212,8 @@ __global__ void computeDistancesKernel(float *px, float *py, int *labels,
     extern __shared__ float sharedAns[];
     float *sAnsX = sharedAns;
     float *sAnsY = &sharedAns[sharedAnsHalfSize];
-
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int tid = threadIdx.x;
-
     __shared__ int minLabel, maxLabel;
 
     if (tid == 0) {
@@ -231,12 +229,10 @@ __global__ void computeDistancesKernel(float *px, float *py, int *labels,
     }
     __syncthreads();
 
-    // Load required ANS entries into shared memory
-    // indexes [minLabel, maxLabel+1] from ANS
-    int ansRange = maxLabel - minLabel + 2;
-    
-    // Load in a loop if ansRange > blockDim.x
-    for (int i = tid; i < ansRange; i += blockDim.x) {
+    // Load required ans entries into shared memory
+    // indexes [minLabel, maxLabel+1] from ans
+    int ansNum = maxLabel - minLabel + 2;
+    for (int i = tid; i < ansNum; i += blockDim.x) {
         if ((minLabel + i) < ansSize) {
             sAnsX[i] = ansX[minLabel + i];
             sAnsY[i] = ansY[minLabel + i];
@@ -245,18 +241,14 @@ __global__ void computeDistancesKernel(float *px, float *py, int *labels,
     __syncthreads();
 
     if (idx >= n) return;
-
     int label = labels[idx];
     int localLabel = label - minLabel;
-
     float lx = sAnsX[localLabel];
     float ly = sAnsY[localLabel];
     float rx = sAnsX[localLabel + 1];
     float ry = sAnsY[localLabel + 1];
-
     float curX = px[idx];
     float curY = py[idx];
-
     float d = (rx - lx) * (curY - ly) - (ry - ly) * (curX - lx);
     distances[idx] = d;
 }
@@ -635,7 +627,7 @@ extern "C" void gpuQuickHull(float *h_px, float *h_py, int n,
     cudaMemcpy(d_px, h_px, n * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_py, h_py, n * sizeof(float), cudaMemcpyHostToDevice);
 
-    MinMaxPoint h_min, h_max;
+    IndexedPoint h_min, h_max;
     findMinMaxX_CUB(d_px, d_py, n, h_min, h_max);
 
     cudaFree(d_px);
