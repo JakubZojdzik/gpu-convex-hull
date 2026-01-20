@@ -68,12 +68,12 @@ Każdy algorytm uruchamiany jest 3 razy dla 10 niezależnych zestawów danych. W
 
 ## Rezulatat
 
-[](img/results.png)
+![](img/results.png)
 
 ## Wizualizacja
 
 - Rysowanie odcinków: algorytm Bresenhama
 - Rysowanie punktów: naiwne rysowanie kół
 
-[50 punktów wejściowych](img/img_50.jpg)
-[50000 punktów wejściowych](img/img_50000.jpg)
+![50 punktów wejściowych](img/img_50.jpg)
+![50000 punktów wejściowych](img/img_50000.jpg)
