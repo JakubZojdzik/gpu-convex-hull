@@ -114,7 +114,7 @@ int main()
 
     // Visualize GPU result
     visualizeConvexHull(h_px, h_py, N, result_x, result_y, M_gpu, 
-                              "results.ppm", 1920, 1080);
+                              "results.ppm", 1028, 720);
 
 
     free(h_px);
