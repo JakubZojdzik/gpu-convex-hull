@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <ctime>
+#include <time.h>
 #include <chrono>
 #include <vector>
 #include <cstring>
@@ -68,7 +69,8 @@ int main()
 
     int threads = 256;
     int blocks = (N + threads - 1) / threads;
-    unsigned long long seed = 123456ULL;
+    srand(time(NULL));
+    unsigned long long seed = rand();
     generate_points<<<blocks, threads>>>(d_px, d_py, N, seed);
     cudaDeviceSynchronize();
 
@@ -76,13 +78,11 @@ int main()
     cudaMemcpy(h_py, d_py, N * sizeof(float), cudaMemcpyDeviceToHost);
 
     // cpu
-    double resTime;
     int M_cpu = 0;
     memset(result_x, 0, N * sizeof(float));
     memset(result_y, 0, N * sizeof(float));
     auto t0 = std::chrono::high_resolution_clock::now();
     cpuMonotoneChain(h_px, h_py, N, result_x, result_y, &M_cpu);
-    auto t1 = std::chrono::high_resolution_clock::now();
 
     printf("Hull size: %d\n", M_cpu);
     printf("time: %.3f ms\n", elapsed_ms(t0, t1));
