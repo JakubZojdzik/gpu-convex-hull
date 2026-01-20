@@ -4,10 +4,35 @@
 
 
 #define MARGIN_PERCENT 0.05f  // 5% margin on each side
+#define POINT_RADIUS 2           // Radius for regular points
+#define HULL_POINT_RADIUS 4      // Radius for hull points
 
-// Simple kernel to draw a point on the image
+// Helper device function to draw a filled circle
+__device__ void drawCircle(unsigned char *image, int cx, int cy, int radius,
+                          int width, int height,
+                          unsigned char r, unsigned char g, unsigned char b) {
+    // Draw a filled circle using the midpoint circle algorithm
+    for (int dy = -radius; dy <= radius; dy++) {
+        for (int dx = -radius; dx <= radius; dx++) {
+            if (dx*dx + dy*dy <= radius*radius) {
+                int x = cx + dx;
+                int y = cy + dy;
+                
+                // Bounds check
+                if (x >= 0 && x < width && y >= 0 && y < height) {
+                    int pixel_idx = (y * width + x) * 3;
+                    image[pixel_idx + 0] = r;
+                    image[pixel_idx + 1] = g;
+                    image[pixel_idx + 2] = b;
+                }
+            }
+        }
+    }
+}
+
+// Kernel to draw points as small circles
 __global__ void drawPoints(unsigned char *image, float *px, float *py, int N, 
-                           int width, int height, 
+                           int width, int height, int radius,
                            unsigned char r, unsigned char g, unsigned char b) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N) return;
@@ -23,14 +48,8 @@ __global__ void drawPoints(unsigned char *image, float *px, float *py, int N,
     int x = (int)((margin + norm_x * scale) * width);
     int y = (int)((margin + norm_y * scale) * height);
     
-    // Bounds check
-    if (x < 0 || x >= width || y < 0 || y >= height) return;
-    
-    // PPM format: RGB, so 3 bytes per pixel
-    int pixel_idx = (y * width + x) * 3;
-    image[pixel_idx + 0] = r;
-    image[pixel_idx + 1] = g;
-    image[pixel_idx + 2] = b;
+    // Draw circle at this position
+    drawCircle(image, x, y, radius, width, height, r, g, b);
 }
 
 // Simple Bresenham line drawing algorithm
@@ -135,7 +154,7 @@ extern "C" void visualizeConvexHull(
     // Draw all input points in light gray
     blocks = (N + threads - 1) / threads;
     drawPoints<<<blocks, threads>>>(d_image, d_points_x, d_points_y, N, 
-                                     width, height, 200, 200, 200);
+                                     width, height, POINT_RADIUS, 200, 200, 200);
     cudaDeviceSynchronize();
     
     // Copy hull points to device
@@ -153,7 +172,7 @@ extern "C" void visualizeConvexHull(
     
     // Draw hull points in blue (larger/more visible)
     drawPoints<<<blocks, threads>>>(d_image, d_hull_x, d_hull_y, M,
-                                     width, height, 0, 0, 255);
+                                     width, height, HULL_POINT_RADIUS, 0, 0, 255);
     cudaDeviceSynchronize();
     
     // Copy image back to host
