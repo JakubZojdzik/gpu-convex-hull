@@ -32,7 +32,8 @@ extern "C" void gpuQuickHullNaive(
 extern "C" void visualizeConvexHull(
     float *points_x, float *points_y, int N,
     float *hull_x, float *hull_y, int M,
-    const char *filename
+    const char *filename,
+    int width, int height
 );
 
 __global__ void generate_points(float *px, float *py, int N, unsigned long long seed) {
