@@ -288,7 +288,7 @@ static void gpuQuickHullOneSide(float *h_px, float *h_py, int n,
             float h_maxDist;
 
             cudaMemcpy(&h_maxIdx, d_maxIdx, sizeof(int), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&h_maxDist, d_maxDist, sizeof(float), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&h_maxDist, d_maxValue, sizeof(float), cudaMemcpyDeviceToHost);
 
             cudaFree(d_maxIdx);
             cudaFree(d_maxValue);
