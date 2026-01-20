@@ -1,0 +1,719 @@
+=====================================================
+N = 1000000
+=====================================================
+
+--- Input set 1 / 10 ---
+CPU Monotone Chain:
+  Hull size: 338
+  First run: 308.825 ms
+  All runs : 308.825 ms  309.179 ms  312.784 ms
+GPU QuickHull:
+  Hull size: 338
+  First run: 49.057 ms
+  All runs : 49.057 ms  44.900 ms  44.991 ms
+GPU Naive QuickHull:
+  Hull size: 338
+  First run: 121.417 ms
+  All runs : 121.417 ms  119.383 ms  118.942 ms
+
+--- Input set 2 / 10 ---
+CPU Monotone Chain:
+  Hull size: 335
+  First run: 308.961 ms
+  All runs : 308.961 ms  310.693 ms  307.398 ms
+GPU QuickHull:
+  Hull size: 335
+  First run: 46.300 ms
+  All runs : 46.300 ms  45.519 ms  45.286 ms
+GPU Naive QuickHull:
+  Hull size: 335
+  First run: 118.433 ms
+  All runs : 118.433 ms  118.046 ms  119.748 ms
+
+--- Input set 3 / 10 ---
+CPU Monotone Chain:
+  Hull size: 331
+  First run: 311.407 ms
+  All runs : 311.407 ms  316.480 ms  311.206 ms
+GPU QuickHull:
+  Hull size: 331
+  First run: 45.368 ms
+  All runs : 45.368 ms  45.495 ms  45.034 ms
+GPU Naive QuickHull:
+  Hull size: 331
+  First run: 118.619 ms
+  All runs : 118.619 ms  117.174 ms  117.188 ms
+
+--- Input set 4 / 10 ---
+CPU Monotone Chain:
+  Hull size: 334
+  First run: 308.221 ms
+  All runs : 308.221 ms  315.038 ms  308.679 ms
+GPU QuickHull:
+  Hull size: 334
+  First run: 46.784 ms
+  All runs : 46.784 ms  45.941 ms  46.177 ms
+GPU Naive QuickHull:
+  Hull size: 334
+  First run: 118.728 ms
+  All runs : 118.728 ms  118.571 ms  118.788 ms
+
+--- Input set 5 / 10 ---
+CPU Monotone Chain:
+  Hull size: 349
+  First run: 309.309 ms
+  All runs : 309.309 ms  304.497 ms  228.457 ms
+GPU QuickHull:
+  Hull size: 349
+  First run: 27.019 ms
+  All runs : 27.019 ms  26.665 ms  44.792 ms
+GPU Naive QuickHull:
+  Hull size: 349
+  First run: 123.525 ms
+  All runs : 123.525 ms  122.967 ms  121.939 ms
+
+--- Input set 6 / 10 ---
+CPU Monotone Chain:
+  Hull size: 321
+  First run: 306.827 ms
+  All runs : 306.827 ms  307.605 ms  313.998 ms
+GPU QuickHull:
+  Hull size: 321
+  First run: 45.319 ms
+  All runs : 45.319 ms  44.851 ms  44.807 ms
+GPU Naive QuickHull:
+  Hull size: 321
+  First run: 114.712 ms
+  All runs : 114.712 ms  114.789 ms  114.583 ms
+
+--- Input set 7 / 10 ---
+CPU Monotone Chain:
+  Hull size: 343
+  First run: 306.687 ms
+  All runs : 306.687 ms  313.555 ms  306.754 ms
+GPU QuickHull:
+  Hull size: 343
+  First run: 45.369 ms
+  All runs : 45.369 ms  44.815 ms  44.727 ms
+GPU Naive QuickHull:
+  Hull size: 343
+  First run: 120.203 ms
+  All runs : 120.203 ms  119.989 ms  121.247 ms
+
+--- Input set 8 / 10 ---
+CPU Monotone Chain:
+  Hull size: 348
+  First run: 310.459 ms
+  All runs : 310.459 ms  308.477 ms  308.403 ms
+GPU QuickHull:
+  Hull size: 348
+  First run: 46.366 ms
+  All runs : 46.366 ms  46.261 ms  46.229 ms
+GPU Naive QuickHull:
+  Hull size: 348
+  First run: 123.263 ms
+  All runs : 123.263 ms  121.299 ms  121.251 ms
+
+--- Input set 9 / 10 ---
+CPU Monotone Chain:
+  Hull size: 329
+  First run: 309.082 ms
+  All runs : 309.082 ms  313.728 ms  310.388 ms
+GPU QuickHull:
+  Hull size: 329
+  First run: 46.560 ms
+  All runs : 46.560 ms  46.006 ms  46.149 ms
+GPU Naive QuickHull:
+  Hull size: 329
+  First run: 116.893 ms
+  All runs : 116.893 ms  116.840 ms  116.558 ms
+
+--- Input set 10 / 10 ---
+CPU Monotone Chain:
+  Hull size: 329
+  First run: 314.156 ms
+  All runs : 314.156 ms  311.759 ms  315.855 ms
+GPU QuickHull:
+  Hull size: 329
+  First run: 45.410 ms
+  All runs : 45.410 ms  44.812 ms  44.820 ms
+GPU Naive QuickHull:
+  Hull size: 329
+  First run: 117.693 ms
+  All runs : 117.693 ms  130.969 ms  142.257 ms
+
+=====================================================
+N = 5000000
+=====================================================
+
+--- Input set 1 / 10 ---
+CPU Monotone Chain:
+  Hull size: 566
+  First run: 1753.258 ms
+  All runs : 1753.258 ms  1567.710 ms  1729.233 ms
+GPU QuickHull:
+  Hull size: 566
+  First run: 172.766 ms
+  All runs : 172.766 ms  169.907 ms  181.014 ms
+GPU Naive QuickHull:
+  Hull size: 566
+  First run: 718.967 ms
+  All runs : 718.967 ms  724.390 ms  713.539 ms
+
+--- Input set 2 / 10 ---
+CPU Monotone Chain:
+  Hull size: 566
+  First run: 1717.522 ms
+  All runs : 1717.522 ms  1714.137 ms  1683.986 ms
+GPU QuickHull:
+  Hull size: 566
+  First run: 169.353 ms
+  All runs : 169.353 ms  169.399 ms  169.826 ms
+GPU Naive QuickHull:
+  Hull size: 566
+  First run: 654.658 ms
+  All runs : 654.658 ms  655.356 ms  657.002 ms
+
+--- Input set 3 / 10 ---
+CPU Monotone Chain:
+  Hull size: 590
+  First run: 1698.638 ms
+  All runs : 1698.638 ms  1612.078 ms  1717.858 ms
+GPU QuickHull:
+  Hull size: 590
+  First run: 169.796 ms
+  All runs : 169.796 ms  169.735 ms  169.311 ms
+GPU Naive QuickHull:
+  Hull size: 590
+  First run: 676.349 ms
+  All runs : 676.349 ms  675.963 ms  676.338 ms
+
+--- Input set 4 / 10 ---
+CPU Monotone Chain:
+  Hull size: 580
+  First run: 1701.575 ms
+  All runs : 1701.575 ms  1701.031 ms  1701.204 ms
+GPU QuickHull:
+  Hull size: 580
+  First run: 170.233 ms
+  All runs : 170.233 ms  189.892 ms  170.279 ms
+GPU Naive QuickHull:
+  Hull size: 580
+  First run: 670.817 ms
+  All runs : 670.817 ms  669.646 ms  670.175 ms
+
+--- Input set 5 / 10 ---
+CPU Monotone Chain:
+  Hull size: 577
+  First run: 1718.993 ms
+  All runs : 1718.993 ms  1717.079 ms  1702.614 ms
+GPU QuickHull:
+  Hull size: 577
+  First run: 171.599 ms
+  All runs : 171.599 ms  169.651 ms  169.928 ms
+GPU Naive QuickHull:
+  Hull size: 577
+  First run: 668.599 ms
+  All runs : 668.599 ms  666.626 ms  666.862 ms
+
+--- Input set 6 / 10 ---
+CPU Monotone Chain:
+  Hull size: 573
+  First run: 1710.044 ms
+  All runs : 1710.044 ms  1556.399 ms  1562.533 ms
+GPU QuickHull:
+  Hull size: 573
+  First run: 170.010 ms
+  All runs : 170.010 ms  173.438 ms  169.052 ms
+GPU Naive QuickHull:
+  Hull size: 573
+  First run: 663.074 ms
+  All runs : 663.074 ms  661.725 ms  666.564 ms
+
+--- Input set 7 / 10 ---
+CPU Monotone Chain:
+  Hull size: 573
+  First run: 1687.732 ms
+  All runs : 1687.732 ms  1692.372 ms  1688.892 ms
+GPU QuickHull:
+  Hull size: 573
+  First run: 168.873 ms
+  All runs : 168.873 ms  173.569 ms  175.287 ms
+GPU Naive QuickHull:
+  Hull size: 573
+  First run: 664.486 ms
+  All runs : 664.486 ms  665.137 ms  657.220 ms
+
+--- Input set 8 / 10 ---
+CPU Monotone Chain:
+  Hull size: 572
+  First run: 1681.882 ms
+  All runs : 1681.882 ms  1696.667 ms  1657.804 ms
+GPU QuickHull:
+  Hull size: 572
+  First run: 173.273 ms
+  All runs : 173.273 ms  171.288 ms  169.048 ms
+GPU Naive QuickHull:
+  Hull size: 572
+  First run: 662.237 ms
+  All runs : 662.237 ms  659.238 ms  663.050 ms
+
+--- Input set 9 / 10 ---
+CPU Monotone Chain:
+  Hull size: 580
+  First run: 1551.587 ms
+  All runs : 1551.587 ms  1701.053 ms  1534.776 ms
+GPU QuickHull:
+  Hull size: 580
+  First run: 184.161 ms
+  All runs : 184.161 ms  185.920 ms  103.971 ms
+GPU Naive QuickHull:
+  Hull size: 580
+  First run: 754.860 ms
+  All runs : 754.860 ms  759.780 ms  722.366 ms
+
+--- Input set 10 / 10 ---
+CPU Monotone Chain:
+  Hull size: 555
+  First run: 1625.649 ms
+  All runs : 1625.649 ms  1757.703 ms  1732.213 ms
+GPU QuickHull:
+  Hull size: 555
+  First run: 169.301 ms
+  All runs : 169.301 ms  169.663 ms  178.717 ms
+GPU Naive QuickHull:
+  Hull size: 555
+  First run: 681.614 ms
+  All runs : 681.614 ms  675.672 ms  655.324 ms
+
+=====================================================
+N = 10000000
+=====================================================
+
+--- Input set 1 / 10 ---
+CPU Monotone Chain:
+  Hull size: 725
+  First run: 3561.226 ms
+  All runs : 3561.226 ms  3628.902 ms  3420.995 ms
+GPU QuickHull:
+  Hull size: 725
+  First run: 327.682 ms
+  All runs : 327.682 ms  313.923 ms  195.705 ms
+GPU Naive QuickHull:
+  Hull size: 725
+  First run: 934.747 ms
+  All runs : 934.747 ms  931.257 ms  927.134 ms
+
+--- Input set 2 / 10 ---
+CPU Monotone Chain:
+  Hull size: 706
+  First run: 3619.435 ms
+  All runs : 3619.435 ms  3595.791 ms  3586.784 ms
+GPU QuickHull:
+  Hull size: 706
+  First run: 318.051 ms
+  All runs : 318.051 ms  320.819 ms  325.509 ms
+GPU Naive QuickHull:
+  Hull size: 706
+  First run: 893.999 ms
+  All runs : 893.999 ms  907.890 ms  916.249 ms
+
+--- Input set 3 / 10 ---
+CPU Monotone Chain:
+  Hull size: 709
+  First run: 3621.366 ms
+  All runs : 3621.366 ms  3076.549 ms  3695.416 ms
+GPU QuickHull:
+  Hull size: 709
+  First run: 329.054 ms
+  All runs : 329.054 ms  328.720 ms  325.963 ms
+GPU Naive QuickHull:
+  Hull size: 709
+  First run: 887.890 ms
+  All runs : 887.890 ms  912.279 ms  996.499 ms
+
+--- Input set 4 / 10 ---
+CPU Monotone Chain:
+  Hull size: 731
+  First run: 3645.113 ms
+  All runs : 3645.113 ms  2860.144 ms  3609.387 ms
+GPU QuickHull:
+  Hull size: 731
+  First run: 317.987 ms
+  All runs : 317.987 ms  317.873 ms  323.371 ms
+GPU Naive QuickHull:
+  Hull size: 731
+  First run: 937.191 ms
+  All runs : 937.191 ms  937.761 ms  939.189 ms
+
+--- Input set 5 / 10 ---
+CPU Monotone Chain:
+  Hull size: 722
+  First run: 3471.934 ms
+  All runs : 3471.934 ms  3600.385 ms  3330.793 ms
+GPU QuickHull:
+  Hull size: 722
+  First run: 237.430 ms
+  All runs : 237.430 ms  211.897 ms  311.749 ms
+GPU Naive QuickHull:
+  Hull size: 722
+  First run: 987.309 ms
+  All runs : 987.309 ms  984.038 ms  932.255 ms
+
+--- Input set 6 / 10 ---
+CPU Monotone Chain:
+  Hull size: 739
+  First run: 3224.536 ms
+  All runs : 3224.536 ms  3486.898 ms  3613.887 ms
+GPU QuickHull:
+  Hull size: 739
+  First run: 318.093 ms
+  All runs : 318.093 ms  319.167 ms  323.445 ms
+GPU Naive QuickHull:
+  Hull size: 739
+  First run: 946.051 ms
+  All runs : 946.051 ms  943.884 ms  944.997 ms
+
+--- Input set 7 / 10 ---
+CPU Monotone Chain:
+  Hull size: 724
+  First run: 3578.603 ms
+  All runs : 3578.603 ms  3566.746 ms  3584.751 ms
+GPU QuickHull:
+  Hull size: 724
+  First run: 314.106 ms
+  All runs : 314.106 ms  316.926 ms  320.084 ms
+GPU Naive QuickHull:
+  Hull size: 724
+  First run: 936.616 ms
+  All runs : 936.616 ms  936.609 ms  941.611 ms
+
+--- Input set 8 / 10 ---
+CPU Monotone Chain:
+  Hull size: 739
+  First run: 3612.726 ms
+  All runs : 3612.726 ms  3611.205 ms  3657.902 ms
+GPU QuickHull:
+  Hull size: 739
+  First run: 338.724 ms
+  All runs : 338.724 ms  346.000 ms  329.439 ms
+GPU Naive QuickHull:
+  Hull size: 739
+  First run: 1008.578 ms
+  All runs : 1008.578 ms  949.235 ms  894.174 ms
+
+--- Input set 9 / 10 ---
+CPU Monotone Chain:
+  Hull size: 716
+  First run: 3243.620 ms
+  All runs : 3243.620 ms  3587.767 ms  3556.664 ms
+GPU QuickHull:
+  Hull size: 716
+  First run: 316.689 ms
+  All runs : 316.689 ms  313.324 ms  310.605 ms
+GPU Naive QuickHull:
+  Hull size: 716
+  First run: 924.758 ms
+  All runs : 924.758 ms  926.672 ms  932.068 ms
+
+--- Input set 10 / 10 ---
+CPU Monotone Chain:
+  Hull size: 737
+  First run: 3591.897 ms
+  All runs : 3591.897 ms  3544.040 ms  3569.645 ms
+GPU QuickHull:
+  Hull size: 737
+  First run: 327.181 ms
+  All runs : 327.181 ms  330.537 ms  335.262 ms
+GPU Naive QuickHull:
+  Hull size: 737
+  First run: 1057.507 ms
+  All runs : 1057.507 ms  1029.962 ms  1008.123 ms
+
+=====================================================
+N = 50000000
+=====================================================
+
+--- Input set 1 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1258
+  First run: 19479.097 ms
+  All runs : 19479.097 ms  19603.106 ms  19520.721 ms
+GPU QuickHull:
+  Hull size: 1258
+  First run: 1455.052 ms
+  All runs : 1455.052 ms  1459.019 ms  1508.719 ms
+GPU Naive QuickHull:
+  Hull size: 1258
+  First run: 2700.499 ms
+  All runs : 2700.499 ms  2494.659 ms  2683.667 ms
+
+--- Input set 2 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1268
+  First run: 19848.575 ms
+  All runs : 19848.575 ms  19755.192 ms  19999.283 ms
+GPU QuickHull:
+  Hull size: 1268
+  First run: 1505.167 ms
+  All runs : 1505.167 ms  1445.504 ms  1496.158 ms
+GPU Naive QuickHull:
+  Hull size: 1268
+  First run: 2648.491 ms
+  All runs : 2648.491 ms  2566.188 ms  2538.610 ms
+
+--- Input set 3 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1251
+  First run: 19544.181 ms
+  All runs : 19544.181 ms  20001.056 ms  19459.153 ms
+GPU QuickHull:
+  Hull size: 1251
+  First run: 1482.599 ms
+  All runs : 1482.599 ms  1474.380 ms  1209.258 ms
+GPU Naive QuickHull:
+  Hull size: 1251
+  First run: 2428.881 ms
+  All runs : 2428.881 ms  2521.679 ms  2515.056 ms
+
+--- Input set 4 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1234
+  First run: 19481.358 ms
+  All runs : 19481.358 ms  19677.121 ms  20298.521 ms
+GPU QuickHull:
+  Hull size: 1234
+  First run: 1470.019 ms
+  All runs : 1470.019 ms  1434.190 ms  1434.693 ms
+GPU Naive QuickHull:
+  Hull size: 1234
+  First run: 2499.724 ms
+  All runs : 2499.724 ms  2412.192 ms  2530.965 ms
+
+--- Input set 5 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1246
+  First run: 19597.467 ms
+  All runs : 19597.467 ms  19703.903 ms  19911.701 ms
+GPU QuickHull:
+  Hull size: 1246
+  First run: 1497.359 ms
+  All runs : 1497.359 ms  1322.253 ms  1447.917 ms
+GPU Naive QuickHull:
+  Hull size: 1246
+  First run: 2503.113 ms
+  All runs : 2503.113 ms  2519.665 ms  2514.651 ms
+
+--- Input set 6 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1243
+  First run: 19292.877 ms
+  All runs : 19292.877 ms  19423.615 ms  18837.993 ms
+GPU QuickHull:
+  Hull size: 1243
+  First run: 1479.904 ms
+  All runs : 1479.904 ms  1439.340 ms  1430.885 ms
+GPU Naive QuickHull:
+  Hull size: 1243
+  First run: 2514.162 ms
+  All runs : 2514.162 ms  2625.503 ms  2440.385 ms
+
+--- Input set 7 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1234
+  First run: 19217.758 ms
+  All runs : 19217.758 ms  19494.479 ms  18890.091 ms
+GPU QuickHull:
+  Hull size: 1234
+  First run: 1474.856 ms
+  All runs : 1474.856 ms  1247.446 ms  1449.361 ms
+GPU Naive QuickHull:
+  Hull size: 1234
+  First run: 2667.875 ms
+  All runs : 2667.875 ms  2726.138 ms  2511.182 ms
+
+--- Input set 8 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1244
+  First run: 19496.302 ms
+  All runs : 19496.302 ms  19025.061 ms  19692.403 ms
+GPU QuickHull:
+  Hull size: 1244
+  First run: 1507.572 ms
+  All runs : 1507.572 ms  1458.159 ms  1482.489 ms
+GPU Naive QuickHull:
+  Hull size: 1244
+  First run: 2463.337 ms
+  All runs : 2463.337 ms  2526.692 ms  2524.646 ms
+
+--- Input set 9 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1214
+  First run: 18849.756 ms
+  All runs : 18849.756 ms  19833.171 ms  18490.259 ms
+GPU QuickHull:
+  Hull size: 1214
+  First run: 1523.860 ms
+  All runs : 1523.860 ms  1315.272 ms  1391.378 ms
+GPU Naive QuickHull:
+  Hull size: 1214
+  First run: 2490.041 ms
+  All runs : 2490.041 ms  2486.873 ms  2443.079 ms
+
+--- Input set 10 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1242 
+  First run: 19696.820 ms
+  All runs : 19696.820 ms  19750.214 ms  19470.418 ms
+GPU QuickHull:
+  Hull size: 1242
+  First run: 1462.366 ms
+  All runs : 1462.366 ms  1431.398 ms  1440.766 ms
+GPU Naive QuickHull:
+  Hull size: 1242
+  First run: 2505.134 ms
+  All runs : 2505.134 ms  2537.777 ms  2348.597 ms
+
+=====================================================
+N = 100000000
+=====================================================
+
+--- Input set 1 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1579
+  First run: 39484.894 ms
+  All runs : 39484.894 ms  39487.775 ms  39839.303 ms
+GPU QuickHull:
+  Hull size: 1579
+  First run: 2867.838 ms
+  All runs : 2867.838 ms  2848.003 ms  2836.888 ms
+GPU Naive QuickHull:
+  Hull size: 1579
+  First run: 4006.828 ms
+  All runs : 4006.828 ms  4261.570 ms  4512.800 ms
+
+--- Input set 2 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1577
+  First run: 40192.129 ms
+  All runs : 40192.129 ms  40026.501 ms  39671.073 ms
+GPU QuickHull:
+  Hull size: 1577
+  First run: 2831.887 ms
+  All runs : 2831.887 ms  2707.672 ms  2835.362 ms
+GPU Naive QuickHull:
+  Hull size: 1577
+  First run: 4447.419 ms
+  All runs : 4447.419 ms  4371.876 ms  4436.691 ms
+
+--- Input set 3 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1546
+  First run: 39731.310 ms
+  All runs : 39731.310 ms  40393.960 ms  40356.040 ms
+GPU QuickHull:
+  Hull size: 1546
+  First run: 2956.304 ms
+  All runs : 2956.304 ms  2900.552 ms  2900.321 ms
+GPU Naive QuickHull:
+  Hull size: 1546
+  First run: 4328.020 ms
+  All runs : 4328.020 ms  4266.214 ms  4278.940 ms
+
+--- Input set 4 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1558
+  First run: 40379.318 ms
+  All runs : 40379.318 ms  40250.314 ms  39517.696 ms
+GPU QuickHull:
+  Hull size: 1559
+  First run: 2898.352 ms
+  All runs : 2898.352 ms  2901.168 ms  2910.754 ms
+GPU Naive QuickHull:
+  Hull size: 1559
+  First run: 4273.263 ms
+  All runs : 4273.263 ms  4281.524 ms  4174.369 ms
+
+--- Input set 5 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1570
+  First run: 40764.318 ms
+  All runs : 40764.318 ms  40286.604 ms  40985.438 ms
+GPU QuickHull:
+  Hull size: 1570
+  First run: 2863.335 ms
+  All runs : 2863.335 ms  2832.707 ms  2839.760 ms
+GPU Naive QuickHull:
+  Hull size: 1570
+  First run: 4479.742 ms
+  All runs : 4479.742 ms  4328.728 ms  4138.332 ms
+
+--- Input set 6 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1542
+  First run: 40030.064 ms
+  All runs : 40030.064 ms  40039.355 ms  39902.309 ms
+GPU QuickHull:
+  Hull size: 1542
+  First run: 2922.598 ms
+  All runs : 2922.598 ms  2878.269 ms  2853.009 ms
+GPU Naive QuickHull:
+  Hull size: 1542
+  First run: 4243.693 ms
+  All runs : 4243.693 ms  4064.028 ms  4246.921 ms
+
+--- Input set 7 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1595
+  First run: 40116.441 ms
+  All runs : 40116.441 ms  39773.551 ms  40721.971 ms
+GPU QuickHull:
+  Hull size: 1595
+  First run: 2908.927 ms
+  All runs : 2908.927 ms  2853.717 ms  2880.367 ms
+GPU Naive QuickHull:
+  Hull size: 1595
+  First run: 4229.087 ms
+  All runs : 4229.087 ms  3930.420 ms  4544.912 ms
+
+--- Input set 8 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1602
+  First run: 40026.657 ms
+  All runs : 40026.657 ms  40024.472 ms  39944.196 ms
+GPU QuickHull:
+  Hull size: 1602
+  First run: 2901.685 ms
+  All runs : 2901.685 ms  2897.213 ms  2870.202 ms
+GPU Naive QuickHull:
+  Hull size: 1602
+  First run: 4554.248 ms
+  All runs : 4554.248 ms  4303.074 ms  4502.082 ms
+
+--- Input set 9 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1554
+  First run: 40425.808 ms
+  All runs : 40425.808 ms  41262.060 ms  40910.564 ms
+GPU QuickHull:
+  Hull size: 1554
+  First run: 2877.683 ms
+  All runs : 2877.683 ms  2917.212 ms  2881.155 ms
+GPU Naive QuickHull:
+  Hull size: 1554
+  First run: 4289.747 ms
+  All runs : 4289.747 ms  4109.611 ms  4302.495 ms
+
+--- Input set 10 / 10 ---
+CPU Monotone Chain:
+  Hull size: 1573
+  First run: 39790.170 ms
+  All runs : 39790.170 ms  39945.884 ms  39897.561 ms
+GPU QuickHull:
+  Hull size: 1573
+  First run: 2842.005 ms
+  All runs : 2842.005 ms  2760.038 ms  2870.038 ms
+GPU Naive QuickHull:
+  Hull size: 1573
+  First run: 3737.282 ms
+  All runs : 3737.282 ms  4133.064 ms  4418.335 ms

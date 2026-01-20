@@ -43,12 +43,13 @@ __global__ void generate_points(float *px, float *py, int N, unsigned long long 
     curandStatePhilox4_32_10_t state;
     curand_init(seed, idx, 0, &state);
 
-    float u = curand_uniform(&state);
-    float theta = curand_uniform(&state) * 2.0f * PI;
-
-    float r = sqrtf(u);
-    px[idx] = r * cosf(theta);
-    py[idx] = r * sinf(theta);
+    float x = curand_uniform(&state), y = curand_uniform(&state);
+    while(x*y > 1) {
+        x = curand_uniform(&state);
+        y = curand_uniform(&state);
+    }
+    px[idx] = x;
+    py[idx] = y;
 }
 
 // ================= Timing helper =================
