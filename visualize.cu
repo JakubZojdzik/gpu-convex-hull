@@ -154,7 +154,7 @@ extern "C" void visualizeConvexHull(
     // Draw all input points in light gray
     blocks = (N + threads - 1) / threads;
     drawPoints<<<blocks, threads>>>(d_image, d_points_x, d_points_y, N, 
-                                     width, height, POINT_RADIUS, 200, 200, 200);
+                                     width, height, POINT_RADIUS, 0, 0, 0);
     cudaDeviceSynchronize();
     
     // Copy hull points to device
