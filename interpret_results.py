@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import matplotlib.pyplot as plt
 
 
-f = open("results.txt", "r").read()
+f = open("results_ring.txt", "r").read()
 
 sections = f.split("\n\n")
 
@@ -60,7 +60,7 @@ df = pd.DataFrame({
     "N": res_N,
     "Algorithm": res_alg,
     "Avg First Run (ms)": res_avg_first,
-    "Avg All Runs (ms)": res_avg_all,
+    "Avg time (ms)": res_avg_all,
     "Avg Hull Size": res_avg_resp,
 })
 
@@ -68,7 +68,7 @@ print(df)
 
 plt.figure()
 for alg, g in df.groupby("Algorithm"):
-    plt.plot(g["N"], g["Avg All Runs (ms)"], marker='o', label=alg)
+    plt.plot(g["N"], g["Avg time (ms)"], marker='o', label=alg)
 
 plt.xlabel("N (milions)")
 plt.ylabel("time")

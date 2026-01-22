@@ -622,7 +622,7 @@ GPU Naive QuickHull:
 
 --- Input set 4 / 10 ---
 CPU Monotone Chain:
-  Hull size: 1558
+  Hull size: 1559
   First run: 40379.318 ms
   All runs : 40379.318 ms  40250.314 ms  39517.696 ms
 GPU QuickHull:
@@ -717,3 +717,4 @@ GPU Naive QuickHull:
   Hull size: 1573
   First run: 3737.282 ms
   All runs : 3737.282 ms  4133.064 ms  4418.335 ms
+

@@ -52,7 +52,7 @@ double elapsed_ms(std::chrono::high_resolution_clock::time_point a,
 }
 
 int main() {
-  int N = 20; // Smaller dataset for visualization
+  int N = 10000; // Smaller dataset for visualization
   float *d_px, *d_py;
   cudaMalloc(&d_px, N * sizeof(float));
   cudaMalloc(&d_py, N * sizeof(float));
