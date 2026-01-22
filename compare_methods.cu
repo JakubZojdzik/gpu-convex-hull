@@ -30,10 +30,11 @@ __global__ void generate_points(float *px, float *py, int N,
   curandStatePhilox4_32_10_t state;
   curand_init(seed, idx, 0, &state);
 
-  float x = curand_uniform(&state), y = curand_uniform(&state);
-  while (x * y > 1) {
-    x = curand_uniform(&state);
-    y = curand_uniform(&state);
+  float x = curand_uniform(&state) * 2.0f - 1.0f;
+  float y = curand_uniform(&state) * 2.0f - 1.0f;
+  while (x*x + y*y > 1 && x*x + y*y < 0.95f) {
+    x = curand_uniform(&state) * 2.0f - 1.0f;
+    y = curand_uniform(&state) * 2.0f - 1.0f;
   }
   px[idx] = x;
   py[idx] = y;
@@ -46,7 +47,7 @@ double elapsed_ms(std::chrono::high_resolution_clock::time_point a,
 
 int main() {
   const std::vector<int> input_sizes = {1000000,  5000000,   10000000,
-                                        50000000, 100000000, 500000000};
+                                        50000000, 100000000};
 
   const int NUM_SETS = 10;
   const int NUM_RUNS = 3;
@@ -72,7 +73,7 @@ int main() {
     for (int set = 0; set < NUM_SETS; ++set) {
       printf("\n--- Input set %d / %d ---\n", set + 1, NUM_SETS);
 
-      unsigned long long seed = 123456ULL + set;
+      unsigned long long seed = 123123ULL + set;
       generate_points<<<blocks, threads>>>(d_px, d_py, N, seed);
       cudaDeviceSynchronize();
 
